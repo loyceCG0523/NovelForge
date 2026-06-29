@@ -1,0 +1,77 @@
+﻿<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>NovelForge - 自动生产监控页</title>
+  <link rel="stylesheet" href="style.css?v=account-summary-1">
+</head>
+<body>
+  <div class="app">
+    <aside class="sidebar">
+      <div class="brand"><div class="brand-mark">N</div><div><div class="brand-title">NovelForge</div></div></div>
+      <nav class="nav">
+        <a class="nav-item active" href="01-workbench.html">创作工作台</a>
+        <a class="nav-item" href="10-projects.html">作品管理</a>
+        <a class="nav-item" href="06-sample-analysis.html">样本分析</a>
+        <a class="nav-item" href="11-personalization.html">个性化</a>
+        <a class="nav-item" href="09-user.html">用户中心</a>
+      </nav>
+      <div class="side-card"><strong>无人值守生产</strong><p>章节生成、审校、返工和记忆更新均由系统自动调度。</p></div>
+    </aside>
+    <main class="main">
+      <header class="topbar">
+        <div class="title-block"><h1>自动生产监控</h1><p>当前任务：生成第 24 章，目标 3000 字，阶段：连续性审校</p></div>
+        <div class="top-actions"><button class="btn warning">暂停队列</button><button class="btn primary">生成下一章</button></div>
+      </header>
+
+      <div class="kanban">
+        <section class="kanban-col"><div class="kanban-title">待生成</div><div class="task-card"><strong>第 25 章 铜铃再响</strong><p class="muted">目标 3000 字</p><span class="tag">计划完成 11:30</span></div><div class="task-card"><strong>第 26 章 密库影子</strong><p class="muted">等待第 25 章状态</p></div></section>
+        <section class="kanban-col"><div class="kanban-title">生成中</div><div class="task-card"><strong>第 24 章 夜入军府</strong><p class="muted">已写 2416 字</p><div class="progress"><span style="width:81%"></span></div></div></section>
+        <section class="kanban-col"><div class="kanban-title">待审校</div><div class="task-card"><strong>第 23 章 沈微负伤</strong><p class="muted">质量评分 84</p><span class="tag yellow">需风格检查</span></div></section>
+        <section class="kanban-col"><div class="kanban-title">返工中</div><div class="task-card"><strong>第 22 章 雨夜追兵</strong><p class="muted">人物伤势冲突已修正</p><span class="tag red">二次审校</span></div></section>
+        <section class="kanban-col"><div class="kanban-title">已完成</div><div class="task-card"><strong>第 21 章 暗河旧印</strong><p class="muted">质量评分 91</p><span class="tag green">已入库</span></div></section>
+      </div>
+
+      <div class="layout-main-side" style="margin-top:16px">
+        <section class="panel">
+          <div class="panel-header"><div><div class="panel-title">返工记录</div><div class="panel-subtitle">系统自动处理结果</div></div></div>
+          <div class="panel-body">
+            <table class="table">
+              <thead><tr><th>章节</th><th>问题</th><th>处理方式</th><th>结果</th></tr></thead>
+              <tbody>
+                <tr><td>第 22 章</td><td>沈微受伤后仍进行高强度战斗</td><td>重写动作段落</td><td><span class="tag green">通过</span></td></tr>
+                <tr><td>第 23 章</td><td>出现 7 处 AI 模板句式</td><td>进入句式清理</td><td><span class="tag yellow">待复核</span></td></tr>
+                <tr><td>第 24 章</td><td>青铜铃伏笔推进不足</td><td>补写章尾事件钩子</td><td><span class="tag">处理中</span></td></tr>
+              </tbody>
+            </table>
+          </div>
+        </section>
+
+        <aside class="panel pad">
+          <div class="panel-title">实时日志</div>
+          <div class="log" style="margin-top:14px">
+            <div class="log-item">10:12 已组装第 21-23 章全文上下文。</div>
+            <div class="log-item">10:14 已检索青铜铃相关伏笔片段 4 条。</div>
+            <div class="log-item">10:18 发现人物位置冲突：陆衡不应出现在外巷。</div>
+            <div class="log-item">10:21 正在重写第 24 章第三场景细纲。</div>
+            <div class="log-item">10:25 AI Pattern Cleaner 等待执行。</div>
+          </div>
+        </aside>
+      </div>
+    </main>
+  </div>
+  <script src="sidebar.js"></script>
+</body>
+</html>
+
+
+
+
+
+
+
+
+
+
+

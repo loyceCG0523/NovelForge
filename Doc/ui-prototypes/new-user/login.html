@@ -1,0 +1,50 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>NovelForge - 登录</title>
+  <link rel="stylesheet" href="style.css?v=new-user-1">
+</head>
+<body>
+  <div class="entry-shell">
+    <aside class="entry-visual">
+      <div class="brand-row">
+        <div class="brand-mark">N</div>
+        <div><strong>NovelForge</strong><span>欢迎回到创作现场</span></div>
+      </div>
+      <div class="visual-copy">
+        <h1>继续管理你的小说项目、章节生产和结构化记忆。</h1>
+        <p>登录后进入创作工作台，查看当前作品状态、风险提醒、自动生产队列和最近审校结果。</p>
+        <div class="visual-board">
+          <div class="visual-card"><strong>灰塔长夜</strong><span>第 24 章生成中</span></div>
+          <div class="visual-card"><strong>待处理风险</strong><span>4 条需要确认</span></div>
+          <div class="visual-card"><strong>本月生成</strong><span>182,400 字</span></div>
+        </div>
+      </div>
+      <div class="brand-row"><span>系统已保留你的作品、偏好、记忆库和审校策略</span></div>
+    </aside>
+
+    <main class="entry-main">
+      <section class="auth-card">
+        <div class="auth-head">
+          <div><h2>登录账号</h2><p>进入你的作品管理和创作工作台。</p></div>
+          <a class="auth-switch" href="register.html">创建账号</a>
+        </div>
+        <form class="form-grid">
+          <div class="field"><label>邮箱</label><input value="linchuan@example.com"></div>
+          <div class="field"><label>密码</label><input type="password" value="novelforge"></div>
+          <label class="check-row"><input type="checkbox" checked> 保持登录状态，下次直接进入工作台。</label>
+          <a class="primary-action" href="../experienced-user/01-workbench.html" style="display:grid;place-items:center">登录并进入工作台</a>
+        </form>
+        <div class="divider">或</div>
+        <div class="oauth-grid">
+          <button class="secondary-action">邮箱验证码登录</button>
+          <button class="secondary-action">找回密码</button>
+        </div>
+        <div class="hint-panel">首次登录会默认进入最近使用的作品。你也可以从作品管理页切换到其它小说项目。</div>
+      </section>
+    </main>
+  </div>
+</body>
+</html>

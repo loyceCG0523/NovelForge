@@ -1,0 +1,57 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>NovelForge - 注册</title>
+  <link rel="stylesheet" href="style.css?v=new-user-1">
+</head>
+<body>
+  <div class="entry-shell">
+    <aside class="entry-visual">
+      <div class="brand-row">
+        <div class="brand-mark">N</div>
+        <div><strong>NovelForge</strong><span>长篇小说自动生产系统</span></div>
+      </div>
+      <div class="visual-copy">
+        <h1>从一个想法开始，生成可持续推进的长篇小说项目。</h1>
+        <p>注册后只需要填写少量起始需求，系统会自动扩展 NovelBrief、人物状态、章节规划和审校策略。</p>
+        <div class="visual-board">
+          <div class="visual-card"><strong>低干预创作</strong><span>默认自动规划和审校</span></div>
+          <div class="visual-card"><strong>结构化记忆</strong><span>人物、伏笔、时间线可追踪</span></div>
+          <div class="visual-card"><strong>反 AI 风格控制</strong><span>减少模板句式和解释性对白</span></div>
+        </div>
+      </div>
+      <div class="brand-row"><span>适合希望长期维护多部小说项目的个人创作者</span></div>
+    </aside>
+
+    <main class="entry-main">
+      <section class="auth-card">
+        <div class="auth-head">
+          <div><h2>创建账号</h2><p>完成注册后进入首次创建引导，系统会帮助你生成第一份创作规格。</p></div>
+          <a class="auth-switch" href="login.html">已有账号</a>
+        </div>
+        <form class="form-grid">
+          <div class="field"><label>邮箱</label><input value="linchuan@example.com" aria-label="邮箱"></div>
+          <div class="split-fields">
+            <div class="field"><label>密码</label><input type="password" value="novelforge"></div>
+            <div class="field"><label>确认密码</label><input type="password" value="novelforge"></div>
+          </div>
+          <div class="split-fields">
+            <div class="field"><label>创作身份</label><select><option>个人作者</option><option>工作室主笔</option><option>剧情策划</option></select></div>
+            <div class="field"><label>主要题材</label><select><option>奇幻悬疑</option><option>都市异能</option><option>仙侠群像</option><option>科幻悬疑</option></select></div>
+          </div>
+          <label class="check-row"><input type="checkbox" checked> 我同意服务条款，并允许系统根据我的创作偏好生成默认个性化配置。</label>
+          <a class="primary-action" href="onboarding.html" style="display:grid;place-items:center">注册并开始创建</a>
+        </form>
+        <div class="divider">或</div>
+        <div class="oauth-grid">
+          <button class="secondary-action">使用手机号注册</button>
+          <button class="secondary-action">使用邮箱验证码</button>
+        </div>
+        <div class="hint-panel">注册不会要求你立即做复杂设定。第一步只收集题材、目标字数和核心卖点，后续由系统自动扩展。</div>
+      </section>
+    </main>
+  </div>
+</body>
+</html>

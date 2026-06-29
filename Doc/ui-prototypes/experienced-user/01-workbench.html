@@ -1,0 +1,228 @@
+﻿<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>NovelForge - 创作工作台</title>
+  <link rel="stylesheet" href="style.css?v=account-summary-1">
+</head>
+<body class="workbench-page">
+  <div class="workbench-shell">
+    <aside class="sidebar">
+      <div class="brand">
+        <div class="brand-mark">N</div>
+        <div>
+          <div class="brand-title">NovelForge</div>
+          
+        </div>
+      </div>
+
+      <nav class="nav">
+        <a class="nav-item active" href="01-workbench.html">创作工作台</a>
+        <a class="nav-item" href="10-projects.html">作品管理</a>
+        <a class="nav-item" href="06-sample-analysis.html">样本分析</a>
+        <a class="nav-item" href="11-personalization.html">个性化</a>
+        <a class="nav-item" href="09-user.html">用户中心</a>
+      </nav>
+    </aside>
+
+    <main class="workbench-main">
+      <header class="workbench-topbar">
+        <div class="workbench-title-zone">
+          <button class="icon-button">☰</button>
+          <div class="workbench-book-title">《灰塔长夜》<span>⌄</span></div>
+        </div>
+
+        <div class="workbench-status-strip">
+          <div class="strip-item word-strip">
+            字数进度：
+            <strong>182,400 / 300,000 字</strong>
+            <div class="mini-progress"><span style="width:61%"></span></div>
+          </div>
+          <div class="strip-item word-strip">
+            章节进度：
+            <strong>第 24 / 100 章</strong>
+            <div class="mini-progress chapter"><span style="width:24%"></span></div>
+          </div>
+        </div>
+
+        <div class="workbench-tools">
+          <button class="round-tool">?</button>
+          <button class="round-tool notify">◌<b>3</b></button>
+          <button class="round-tool">⚙</button>
+        </div>
+      </header>
+
+      <section class="workbench-content">
+        <section class="state-preview-panel">
+          <div class="state-preview-header">
+            <div>
+              <h2>创作状态预览</h2>
+              <p>当前小说生产过程的关键状态看板，可进入具体页面查看、编辑和处理。</p>
+            </div>
+            <a href="08-production.html">查看全部生产状态</a>
+          </div>
+          <div class="state-board">
+            <a class="state-card featured ready" href="02-brief.html">
+              <div class="state-card-top">
+                <span class="state-icon">◇</span>
+                <span class="state-badge good">已完成</span>
+              </div>
+              <h3>起始需求</h3>
+              <p>NovelBrief 已补全，题材、卖点、主角设定和平台风格已生成创作规格。</p>
+              <div class="state-checklist">
+                <span>题材定位</span>
+                <span>卖点模型</span>
+                <span>平台风格</span>
+              </div>
+              <div class="state-meta"><span>规格状态</span><strong>可进入规划</strong></div>
+            </a>
+
+            <a class="state-card featured active" href="03-editor.html">
+              <div class="state-card-top">
+                <span class="state-icon">▤</span>
+                <span class="state-badge live">生成中</span>
+              </div>
+              <h3>章节编辑</h3>
+              <p>第 24 章正文草稿、上下文包和 AI 标记已就绪，可进入编辑页查看。</p>
+              <div class="state-meter"><span style="width:68%"></span></div>
+              <div class="state-meta"><span>正文进度</span><strong>2,416 / 3,000 字</strong></div>
+            </a>
+
+            <a class="state-card featured synced" href="04-memory.html">
+              <div class="state-card-top">
+                <span class="state-icon">○</span>
+                <span class="state-badge good">已同步</span>
+              </div>
+              <h3>结构化记忆</h3>
+              <p>人物、地点、道具和剧情时间线已同步到第 23 章，可查询追踪。</p>
+              <div class="state-stat-row compact">
+                <div><strong>6</strong><span>状态表</span></div>
+                <div><strong>128</strong><span>记忆条目</span></div>
+              </div>
+              <div class="state-meta"><span>最近同步</span><strong>第 23 章</strong></div>
+            </a>
+
+            <a class="state-card alert" href="05-foreshadow.html">
+              <div class="state-card-top">
+                <span class="state-icon">✎</span>
+                <span class="state-badge warn">需推进</span>
+              </div>
+              <h3>伏笔时间线</h3>
+              <p>青铜铃、残缺地图、师父旧伤均有后续风险提醒。</p>
+              <div class="state-stat-row">
+                <div><strong>3</strong><span>待推进</span></div>
+                <div><strong>18</strong><span>最长间隔章数</span></div>
+              </div>
+            </a>
+
+            <a class="state-card alert" href="07-ai-review.html">
+              <div class="state-card-top">
+                <span class="state-icon">▽</span>
+                <span class="state-badge warn">待处理</span>
+              </div>
+              <h3>反 AI 审校</h3>
+              <p>模板句式、抽象情绪和解释性对白需要清理。</p>
+              <div class="state-stat-row">
+                <div><strong>9</strong><span>建议</span></div>
+                <div><strong>31</strong><span>AI 味评分</span></div>
+              </div>
+            </a>
+
+            <a class="state-card production" href="08-production.html">
+              <div class="state-card-top">
+                <span class="state-icon">◌</span>
+                <span class="state-badge live">运行中</span>
+              </div>
+              <h3>自动生产</h3>
+              <p>队列正在生成第 24 章，并等待连续性审校结果。</p>
+              <div class="state-stat-row compact">
+                <div><strong>1</strong><span>生成中</span></div>
+                <div><strong>3</strong><span>待处理任务</span></div>
+              </div>
+            </a>
+          </div>
+        </section>
+
+        <section class="risk-board-panel">
+          <div class="risk-board-header">
+            <div>
+              <h2>风险提醒</h2>
+              <p>实时展示当前章节和长线创作中的风险内容、处理状态和下一步动作。</p>
+            </div>
+            <div class="risk-summary">
+              <span><strong>4</strong> 当前风险</span>
+              <span><strong>1</strong> 阻塞中</span>
+              <span><strong>2</strong> 自动处理中</span>
+            </div>
+          </div>
+
+          <div class="risk-board-grid">
+            <article class="risk-ticket high">
+              <div class="risk-ticket-main">
+                <div class="risk-type">连续性风险</div>
+                <h3>角色状态与剧情动作冲突</h3>
+                <p>检测到 2 处潜在连续性冲突，涉及角色“洛衡”“瑟琳”。瑟琳在第 22 章受伤，本章高强度战斗动作需要限制。</p>
+              </div>
+              <div class="risk-ticket-side">
+                <span class="severity high">高</span>
+                <span class="process pending">待处理</span>
+                <a href="04-memory.html">查看详情</a>
+              </div>
+            </article>
+
+            <article class="risk-ticket mid">
+              <div class="risk-ticket-main">
+                <div class="risk-type">AI 句式风险</div>
+                <h3>模板表达占比过高</h3>
+                <p>本章 AI 句式使用率 28%，高于建议阈值 20%。集中出现在心理描写和章尾悬念句。</p>
+              </div>
+              <div class="risk-ticket-side">
+                <span class="severity mid">中</span>
+                <span class="process running">清理中</span>
+                <a href="07-ai-review.html">进入审校</a>
+              </div>
+            </article>
+
+            <article class="risk-ticket mid">
+              <div class="risk-ticket-main">
+                <div class="risk-type">伏笔遗漏风险</div>
+                <h3>关键伏笔长时间未推进</h3>
+                <p>青铜铃、残缺地图、师父旧伤 3 条伏笔在当前推进中可能被遗漏，建议在第 24-26 章加入轻量提醒。</p>
+              </div>
+              <div class="risk-ticket-side">
+                <span class="severity mid">中</span>
+                <span class="process running">规划中</span>
+                <a href="05-foreshadow.html">查看伏笔</a>
+              </div>
+            </article>
+
+            <article class="risk-ticket high decision">
+              <div class="risk-ticket-main">
+                <div class="risk-type">剧情走向风险</div>
+                <h3>角色“洛衡”动机转变</h3>
+                <p>该变化将影响后续 3 章剧情走向，并可能改变主角团内部信任关系。系统已暂停相关分支，等待剧情方案重算。</p>
+              </div>
+              <div class="risk-ticket-side">
+                <span class="severity high">高</span>
+                <span class="process blocked">阻塞中</span>
+                <a href="08-production.html">查看处理</a>
+              </div>
+            </article>
+          </div>
+        </section>
+      </section>
+    </main>
+  </div>
+  <script src="sidebar.js"></script>
+</body>
+</html>
+
+
+
+
+
+
+
+
+

@@ -1,0 +1,74 @@
+﻿<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>NovelForge - 起始需求填写页</title>
+  <link rel="stylesheet" href="style.css?v=account-summary-1">
+</head>
+<body>
+  <div class="app">
+    <aside class="sidebar">
+      <div class="brand"><div class="brand-mark">N</div><div><div class="brand-title">NovelForge</div></div></div>
+      <nav class="nav">
+        <a class="nav-item active" href="01-workbench.html">创作工作台</a>
+        <a class="nav-item" href="10-projects.html">作品管理</a>
+        <a class="nav-item" href="06-sample-analysis.html">样本分析</a>
+        <a class="nav-item" href="11-personalization.html">个性化</a>
+        <a class="nav-item" href="09-user.html">用户中心</a>
+      </nav>
+      <div class="side-card"><strong>一句话也能启动</strong><p>字段可以不完整，Brief Expander 会补齐读者定位、爽点模型、世界观和前期节奏。</p></div>
+    </aside>
+    <main class="main">
+      <header class="topbar">
+        <div class="title-block"><h1>创建新小说</h1><p>填写起始需求，系统将自动扩展为完整创作规格</p></div>
+        <div class="top-actions"><button class="btn">保存草稿</button><button class="btn primary">开始自动规划</button></div>
+      </header>
+
+      <div class="layout-main-side">
+        <section class="panel">
+          <div class="panel-header"><div><div class="panel-title">NovelBrief</div><div class="panel-subtitle">用户只需要提供创作方向，其余由系统补全</div></div></div>
+          <div class="panel-body">
+            <div class="grid cols-2">
+              <div class="field"><label>作品类型</label><select class="select"><option>玄幻</option></select></div>
+              <div class="field"><label>目标字数</label><input class="input" value="80万字"></div>
+              <div class="field"><label>目标读者</label><select class="select"><option>男频</option></select></div>
+              <div class="field"><label>平台风格</label><select class="select"><option>起点节奏</option></select></div>
+            </div>
+            <div class="field"><label>一句话需求</label><textarea class="textarea">写一本男频玄幻长篇，主角从边境小城崛起，有家族秘密，风格爽快但不要太白。</textarea></div>
+            <div class="field"><label>核心卖点</label><div class="tag-row"><span class="tag">废柴逆袭</span><span class="tag">家族秘密</span><span class="tag">宗门成长</span><span class="tag">边境崛起</span></div></div>
+            <div class="field"><label>主角设定</label><textarea class="textarea">边境小城少年，表面资质普通，实际身世隐藏旧王朝与异族战争的秘密。</textarea></div>
+            <div class="grid cols-2">
+              <div class="field"><label>禁用内容</label><input class="input" value="不要后宫，不要降智反派"></div>
+              <div class="field"><label>章节字数</label><input class="input" value="每章 3000 字"></div>
+            </div>
+          </div>
+        </section>
+
+        <aside class="panel">
+          <div class="panel-header"><div><div class="panel-title">自动补全预览</div><div class="panel-subtitle">Brief Expander 输出</div></div><span class="tag green">已生成</span></div>
+          <div class="panel-body grid">
+            <div><strong>爽点模型</strong><p class="muted">压抑开局、能力觉醒、身份反转、宗门竞争、边境战功。</p></div>
+            <div><strong>主角成长线</strong><p class="muted">求生 -> 立足 -> 拜入宗门 -> 发现家族秘密 -> 卷入旧王朝遗案。</p></div>
+            <div><strong>核心矛盾</strong><p class="muted">小城少年个人崛起与旧势力阴谋复苏并行推进。</p></div>
+            <div><strong>世界观方向</strong><p class="muted">边境军府、宗门体系、王朝遗族、异族战场四层结构。</p></div>
+            <div><strong>前 30 章节奏</strong><p class="muted">前 5 章立人设，第 8 章触发金手指，第 15 章进入宗门，第 28 章第一次身份线索。</p></div>
+          </div>
+        </aside>
+      </div>
+    </main>
+  </div>
+  <script src="sidebar.js"></script>
+</body>
+</html>
+
+
+
+
+
+
+
+
+
+
+

@@ -1,0 +1,72 @@
+﻿<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>NovelForge - 伏笔与时间线管理页</title>
+  <link rel="stylesheet" href="style.css?v=account-summary-1">
+</head>
+<body>
+  <div class="app">
+    <aside class="sidebar">
+      <div class="brand"><div class="brand-mark">N</div><div><div class="brand-title">NovelForge</div></div></div>
+      <nav class="nav">
+        <a class="nav-item active" href="01-workbench.html">创作工作台</a>
+        <a class="nav-item" href="10-projects.html">作品管理</a>
+        <a class="nav-item" href="06-sample-analysis.html">样本分析</a>
+        <a class="nav-item" href="11-personalization.html">个性化</a>
+        <a class="nav-item" href="09-user.html">用户中心</a>
+      </nav>
+      <div class="side-card"><strong>伏笔状态</strong><p>所有伏笔都有埋设、推进、兑现和风险遗漏状态，避免长篇写作中失控。</p></div>
+    </aside>
+    <main class="main">
+      <header class="topbar">
+        <div class="title-block"><h1>伏笔与时间线管理</h1><p>追踪关键事件、伏笔埋设点和兑现计划</p></div>
+        <div class="top-actions"><button class="btn">新增伏笔</button><button class="btn primary">生成推进建议</button></div>
+      </header>
+
+      <div class="layout-side-main">
+        <aside class="panel pad">
+          <div class="panel-title">伏笔列表</div>
+          <div class="chapter-list" style="margin-top:14px">
+            <div class="chapter-item active"><div class="chapter-title">青铜铃</div><div class="chapter-meta">推进中 · 预计第 31 章兑现</div></div>
+            <div class="chapter-item"><div class="chapter-title">残缺地图</div><div class="chapter-meta">已埋设 · 等待推进</div></div>
+            <div class="chapter-item"><div class="chapter-title">师父旧伤</div><div class="chapter-meta">风险遗漏 · 12 章未出现</div></div>
+            <div class="chapter-item"><div class="chapter-title">边境军府密库</div><div class="chapter-meta">待兑现 · 3 章内</div></div>
+          </div>
+        </aside>
+
+        <section class="grid">
+          <div class="panel">
+            <div class="panel-header"><div><div class="panel-title">章节时间线</div><div class="panel-subtitle">青铜铃相关事件</div></div><span class="tag yellow">需要推进</span></div>
+            <div class="panel-body timeline">
+              <div class="timeline-row"><div class="timeline-index">第 8 章</div><div class="timeline-card"><strong>首次埋设</strong><p class="muted">祠堂地下发现残缺铃舌，但未解释用途。</p></div></div>
+              <div class="timeline-row"><div class="timeline-index">第 14 章</div><div class="timeline-card green"><strong>轻量推进</strong><p class="muted">敌人听到铃声后短暂停手，暗示铃声与血脉有关。</p></div></div>
+              <div class="timeline-row"><div class="timeline-index">第 24 章</div><div class="timeline-card yellow"><strong>建议补写</strong><p class="muted">军府内墙传来同源铃声，推进密库线索。</p></div></div>
+              <div class="timeline-row"><div class="timeline-index">第 31 章</div><div class="timeline-card red"><strong>预计兑现</strong><p class="muted">青铜铃开启旧王朝军械库，揭示林澈身世第一层真相。</p></div></div>
+            </div>
+          </div>
+
+          <div class="panel pad">
+            <div class="panel-title">系统提醒</div>
+            <p class="muted">青铜铃伏笔已 18 章未形成有效推进。建议在第 24 章章尾使用具体事件钩子，而不是抽象悬念句。</p>
+            <div class="tag-row"><span class="tag">对话提及</span><span class="tag">环境声音</span><span class="tag">道具共鸣</span></div>
+          </div>
+        </section>
+      </div>
+    </main>
+  </div>
+  <script src="sidebar.js"></script>
+</body>
+</html>
+
+
+
+
+
+
+
+
+
+
+

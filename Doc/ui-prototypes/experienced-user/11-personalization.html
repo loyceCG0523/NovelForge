@@ -1,0 +1,84 @@
+﻿<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>NovelForge - 个性化</title>
+  <link rel="stylesheet" href="style.css?v=account-summary-1">
+</head>
+<body>
+  <div class="app">
+    <aside class="sidebar">
+      <div class="brand"><div class="brand-mark">N</div><div><div class="brand-title">NovelForge</div></div></div>
+      <nav class="nav">
+        <a class="nav-item" href="01-workbench.html">创作工作台</a>
+        <a class="nav-item" href="10-projects.html">作品管理</a>
+        <a class="nav-item" href="06-sample-analysis.html">样本分析</a>
+        <a class="nav-item active" href="11-personalization.html">个性化</a>
+        <a class="nav-item" href="09-user.html">用户中心</a>
+      </nav>
+      <div class="side-card"><strong>个性化</strong><p>配置默认创作偏好、自动化策略和章节生产习惯。</p></div>
+    </aside>
+    <main class="main">
+      <header class="topbar">
+        <div class="title-block"><h1>个性化</h1><p>配置新作品默认参数、自动生成策略和审校偏好</p></div>
+        <div class="top-actions"><button class="btn">恢复默认</button><button class="btn primary">保存配置</button></div>
+      </header>
+
+      <section class="grid cols-3">
+        <div class="panel pad">
+          <div class="stat-label">默认创作模式</div>
+          <div class="stat-value">极低干预</div>
+          <div class="stat-note">仅关键方向偏移时提醒</div>
+        </div>
+        <div class="panel pad">
+          <div class="stat-label">章节节奏</div>
+          <div class="stat-value">3000 字</div>
+          <div class="stat-note">先细纲，后正文</div>
+        </div>
+        <div class="panel pad">
+          <div class="stat-label">审校强度</div>
+          <div class="stat-value">标准</div>
+          <div class="stat-note">连续性与 AI 句式必检</div>
+        </div>
+      </section>
+
+      <div class="grid cols-2" style="margin-top:16px">
+        <section class="panel">
+          <div class="panel-header"><div><div class="panel-title">创作偏好</div><div class="panel-subtitle">作为新项目的默认配置</div></div></div>
+          <div class="panel-body preference-list">
+            <div class="preference-item"><div><strong>默认平台风格</strong><div class="muted">节奏较快，重视爽点和章尾钩子</div></div><span class="tag">起点</span></div>
+            <div class="preference-item"><div><strong>默认题材倾向</strong><div class="muted">男频玄幻、悬疑感、强主线推进</div></div><span class="tag purple">奇幻悬疑</span></div>
+            <div class="preference-item"><div><strong>伏笔风险提醒</strong><div class="muted">超过 12 章未推进自动报警</div></div><span class="switch"></span></div>
+            <div class="preference-item"><div><strong>章节生成节奏</strong><div class="muted">默认每章 3000 字，先细纲后正文</div></div><span class="tag green">标准</span></div>
+            <div class="preference-item"><div><strong>敏感内容阈值</strong><div class="muted">生成前过滤明显违规方向</div></div><span class="tag yellow">中</span></div>
+          </div>
+        </section>
+
+        <section class="panel">
+          <div class="panel-header"><div><div class="panel-title">自动化策略</div><div class="panel-subtitle">控制系统自动生成、审校和返工方式</div></div></div>
+          <div class="panel-body preference-list">
+            <div class="preference-item"><div><strong>连续性错误自动返工</strong><div class="muted">人物、道具、地点状态冲突时重写段落</div></div><span class="switch"></span></div>
+            <div class="preference-item"><div><strong>伏笔遗漏自动补写</strong><div class="muted">超过推进间隔后自动加入轻量提醒</div></div><span class="switch"></span></div>
+            <div class="preference-item"><div><strong>AI 句式自动清理</strong><div class="muted">按黑名单替换模板表达</div></div><span class="switch"></span></div>
+            <div class="preference-item"><div><strong>无效剧情自动重写</strong><div class="muted">章节无推进时回退到细纲阶段</div></div><span class="switch"></span></div>
+            <div class="preference-item"><div><strong>上下文包自动组装</strong><div class="muted">默认包含前三章全文、相关记忆和伏笔</div></div><span class="switch"></span></div>
+          </div>
+        </section>
+      </div>
+
+      <section class="panel" style="margin-top:16px; margin-bottom:24px">
+        <div class="panel-header"><div><div class="panel-title">风格控制</div><div class="panel-subtitle">控制系统输出时要避免或强化的表达习惯</div></div><button class="btn">编辑词表</button></div>
+        <div class="panel-body">
+          <div class="grid cols-3">
+            <div class="review-line"><span class="tag red">避免</span><p class="muted">抽象情绪、总结式段尾、过度解释人物动机。</p></div>
+            <div class="review-line"><span class="tag yellow">控制</span><p class="muted">每章最多 2 处世界观解释，优先用行动呈现。</p></div>
+            <div class="review-line"><span class="tag green">强化</span><p class="muted">具体物件钩子、对白误导、场景内冲突推进。</p></div>
+          </div>
+        </div>
+      </section>
+    </main>
+  </div>
+  <script src="sidebar.js"></script>
+</body>
+</html>

@@ -1,0 +1,110 @@
+﻿<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>NovelForge - 用户中心</title>
+  <link rel="stylesheet" href="style.css?v=account-summary-1">
+</head>
+<body>
+  <div class="app">
+    <aside class="sidebar">
+      <div class="brand"><div class="brand-mark">N</div><div><div class="brand-title">NovelForge</div></div></div>
+      <nav class="nav">
+        <a class="nav-item" href="01-workbench.html">创作工作台</a>
+        <a class="nav-item" href="10-projects.html">作品管理</a>
+        <a class="nav-item" href="06-sample-analysis.html">样本分析</a>
+        <a class="nav-item" href="11-personalization.html">个性化</a>
+        <a class="nav-item active" href="09-user.html">用户中心</a>
+      </nav>
+      <div class="side-card"><strong>用户模块</strong><p>管理账户、套餐、额度、数据导出和项目归档。</p></div>
+    </aside>
+    <main class="main">
+      <header class="topbar">
+        <div class="title-block"><h1>用户中心</h1><p>管理个人账号、使用额度、数据导出和归档策略</p></div>
+        <div class="top-actions"><button class="btn">导出账号数据</button><button class="btn primary">保存设置</button></div>
+      </header>
+
+      <div class="layout-main-side">
+        <section class="grid">
+          <div class="panel pad">
+            <div class="profile-header">
+              <div class="avatar">林</div>
+              <div>
+                <div class="panel-title">林川 · 主创作者</div>
+                <div class="panel-subtitle">个人账号：林川 · 当前套餐：专业版</div>
+                <div class="tag-row" style="margin-top:10px"><span class="tag green">专业版</span><span class="tag">多作品管理</span><span class="tag purple">自动生产额度</span></div>
+              </div>
+            </div>
+          </div>
+
+          <section class="grid cols-3">
+            <div class="panel pad">
+              <div class="stat-label">活跃作品</div>
+              <div class="stat-value">6 部</div>
+              <div class="stat-note">3 部正在自动生产</div>
+            </div>
+            <div class="panel pad">
+              <div class="stat-label">本月生成</div>
+              <div class="stat-value">18.2 万</div>
+              <div class="stat-note">剩余额度充足</div>
+            </div>
+            <div class="panel pad">
+              <div class="stat-label">归档作品</div>
+              <div class="stat-value">12 部</div>
+              <div class="stat-note">支持恢复生产</div>
+            </div>
+          </section>
+
+          <section class="panel">
+            <div class="panel-header"><div><div class="panel-title">账户与数据</div><div class="panel-subtitle">管理个人账号、导出、备份和归档规则</div></div><button class="btn">导出数据</button></div>
+            <div class="panel-body">
+              <table class="table">
+                <thead><tr><th>项目</th><th>当前状态</th><th>数据范围</th><th>策略</th><th>最近活动</th></tr></thead>
+                <tbody>
+                  <tr><td><strong>灰塔长夜</strong></td><td>生产中</td><td>正文、设定、记忆库</td><td><span class="tag green">自动备份</span></td><td>刚刚保存账号设置</td></tr>
+                  <tr><td><strong>雨巷回声</strong></td><td>待审校</td><td>正文与风格指纹</td><td><span class="tag">可导出</span></td><td>2 小时前完成数据快照</td></tr>
+                  <tr><td><strong>照夜山河</strong></td><td>规划中</td><td>StoryBible 与章节大纲</td><td><span class="tag yellow">每日快照</span></td><td>昨天更新项目归档策略</td></tr>
+                </tbody>
+              </table>
+            </div>
+          </section>
+        </section>
+
+        <aside class="grid">
+          <section class="panel pad">
+            <div class="panel-title">使用额度</div>
+            <div class="panel-subtitle">本月自动创作资源</div>
+            <div style="margin:18px 0 8px" class="progress"><span style="width:58%"></span></div>
+            <div class="muted" style="font-size:12px">已使用 58% · 预计可生成 142 章</div>
+          </section>
+          <section class="panel pad account-summary">
+            <div class="account-summary-head">
+              <div>
+                <div class="panel-title">账号信息</div>
+                <div class="panel-subtitle">个人账号与数据保留策略</div>
+              </div>
+              <span class="tag green">正常</span>
+            </div>
+            <div class="account-info-list">
+              <div class="account-info-item">
+                <span class="account-info-icon">＠</span>
+                <div><strong>登录邮箱</strong><p>linchuan@example.com</p></div>
+              </div>
+              <div class="account-info-item">
+                <span class="account-info-icon">◇</span>
+                <div><strong>套餐状态</strong><p>专业版 · 2026-09-30 到期</p></div>
+              </div>
+              <div class="account-info-item">
+                <span class="account-info-icon">↺</span>
+                <div><strong>数据保留</strong><p>归档作品保留 24 个月</p></div>
+              </div>
+            </div>
+          </section>
+        </aside>
+      </div>
+    </main>
+  </div>
+  <script src="sidebar.js"></script>
+</body>
+</html>
