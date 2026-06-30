@@ -11,6 +11,15 @@ class NovelCreate(BaseModel):
     brief: dict = Field(default_factory=dict)
 
 
+class NovelUpdate(BaseModel):
+    title: str | None = None
+    genre: str | None = None
+    status: str | None = None
+    target_words: int | None = None
+    premise: str | None = None
+    brief: dict | None = None
+
+
 class NovelRead(BaseModel):
     id: UUID
     owner_id: UUID

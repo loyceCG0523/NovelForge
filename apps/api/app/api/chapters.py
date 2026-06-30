@@ -8,7 +8,7 @@ from app.api.dependencies import get_owned_novel
 from app.db.session import get_db
 from app.models.chapter import Chapter
 from app.models.novel import Novel
-from app.schemas.chapter import ChapterCreate, ChapterRead
+from app.schemas.chapter import ChapterCreate, ChapterRead, ChapterUpdate
 
 
 router = APIRouter(prefix="/api/novels/{novel_id}/chapters", tags=["chapters"])
@@ -54,3 +54,61 @@ def list_chapters(
         .order_by(Chapter.chapter_index.asc())
     )
     return list(db.scalars(statement).all())
+
+
+@router.get("/{chapter_id}", response_model=ChapterRead)
+def get_chapter(
+    chapter_id: UUID,
+    novel: Novel = Depends(get_owned_novel),
+    db: Session = Depends(get_db),
+) -> Chapter:
+    chapter = db.get(Chapter, chapter_id)
+    if chapter is None or chapter.novel_id != novel.id:
+        raise HTTPException(status_code=404, detail="Chapter not found")
+    return chapter
+
+
+@router.patch("/{chapter_id}", response_model=ChapterRead)
+def update_chapter(
+    chapter_id: UUID,
+    payload: ChapterUpdate,
+    novel: Novel = Depends(get_owned_novel),
+    db: Session = Depends(get_db),
+) -> Chapter:
+    chapter = db.get(Chapter, chapter_id)
+    if chapter is None or chapter.novel_id != novel.id:
+        raise HTTPException(status_code=404, detail="Chapter not found")
+
+    update_data = payload.model_dump(exclude_unset=True)
+    if "chapter_index" in update_data and update_data["chapter_index"] != chapter.chapter_index:
+        existing_chapter = db.scalar(
+            select(Chapter).where(
+                Chapter.novel_id == novel.id,
+                Chapter.chapter_index == update_data["chapter_index"],
+            )
+        )
+        if existing_chapter is not None:
+            raise HTTPException(status_code=409, detail="Chapter index already exists")
+
+    for key, value in update_data.items():
+        setattr(chapter, key, value)
+    if "content" in update_data:
+        chapter.word_count = len(update_data["content"] or "")
+
+    novel.current_chapter_index = max(novel.current_chapter_index, chapter.chapter_index)
+    db.commit()
+    db.refresh(chapter)
+    return chapter
+
+
+@router.delete("/{chapter_id}", status_code=status.HTTP_204_NO_CONTENT)
+def delete_chapter(
+    chapter_id: UUID,
+    novel: Novel = Depends(get_owned_novel),
+    db: Session = Depends(get_db),
+) -> None:
+    chapter = db.get(Chapter, chapter_id)
+    if chapter is None or chapter.novel_id != novel.id:
+        raise HTTPException(status_code=404, detail="Chapter not found")
+    db.delete(chapter)
+    db.commit()

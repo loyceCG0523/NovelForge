@@ -9,7 +9,7 @@ from app.core.security import get_current_user
 from app.db.session import get_db
 from app.models.novel import Novel
 from app.models.user import User
-from app.schemas.novel import NovelCreate, NovelRead
+from app.schemas.novel import NovelCreate, NovelRead, NovelUpdate
 
 
 router = APIRouter(prefix="/api/novels", tags=["novels"])
@@ -43,4 +43,17 @@ def list_novels(
 
 @router.get("/{novel_id}", response_model=NovelRead)
 def get_novel(novel: Novel = Depends(get_owned_novel)) -> Novel:
+    return novel
+
+
+@router.patch("/{novel_id}", response_model=NovelRead)
+def update_novel(
+    payload: NovelUpdate,
+    novel: Novel = Depends(get_owned_novel),
+    db: Session = Depends(get_db),
+) -> Novel:
+    for key, value in payload.model_dump(exclude_unset=True).items():
+        setattr(novel, key, value)
+    db.commit()
+    db.refresh(novel)
     return novel

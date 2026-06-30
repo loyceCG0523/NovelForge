@@ -525,6 +525,18 @@ select {
   grid-template-columns: repeat(2, minmax(0, 1fr));
 }
 
+.stack-list {
+  display: grid;
+  gap: 12px;
+}
+
+.inline-actions {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+  flex-wrap: wrap;
+}
+
 .panel,
 .metric-card,
 .project-card,
@@ -793,6 +805,109 @@ select {
   line-height: 1.65;
 }
 
+.brief-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.brief-grid div,
+.compact-card {
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--panel-soft);
+  padding: 12px;
+}
+
+.brief-grid span,
+.compact-card span {
+  display: block;
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.brief-grid strong,
+.compact-card strong {
+  display: block;
+  margin-top: 5px;
+  color: var(--ink);
+  font-size: 14px;
+  line-height: 1.55;
+}
+
+.compact-card {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 14px;
+  align-items: start;
+}
+
+.compact-card p {
+  margin: 8px 0 0;
+  color: var(--muted);
+  font-size: 13px;
+  line-height: 1.6;
+}
+
+.compact-card em {
+  color: var(--brand-dark);
+  font-size: 12px;
+  font-style: normal;
+  font-weight: 800;
+  white-space: nowrap;
+}
+
+.chapter-layout {
+  display: grid;
+  grid-template-columns: 360px minmax(0, 1fr);
+  gap: 16px;
+  align-items: start;
+}
+
+.chapter-list {
+  position: sticky;
+  top: 92px;
+}
+
+.chapter-row {
+  width: 100%;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--panel-soft);
+  padding: 12px;
+  text-align: left;
+  cursor: pointer;
+  display: grid;
+  gap: 5px;
+}
+
+.chapter-row.active {
+  border-color: rgba(11, 143, 135, 0.55);
+  background: var(--brand-soft);
+}
+
+.chapter-row span,
+.chapter-row small {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.chapter-row strong {
+  color: var(--ink);
+  font-size: 14px;
+  line-height: 1.35;
+}
+
+.chapter-editor {
+  min-width: 0;
+}
+
+.chapter-content-input {
+  min-height: 360px;
+  line-height: 1.8;
+}
+
 @media (max-width: 1180px) {
   .grid-5,
   .grid-4 {
@@ -800,8 +915,13 @@ select {
   }
 
   .grid-3,
-  .kanban {
+  .kanban,
+  .chapter-layout {
     grid-template-columns: 1fr;
+  }
+
+  .chapter-list {
+    position: static;
   }
 }
 
@@ -829,7 +949,8 @@ select {
   .grid-5,
   .grid-4,
   .grid-3,
-  .grid-2 {
+  .grid-2,
+  .brief-grid {
     grid-template-columns: 1fr;
   }
 }

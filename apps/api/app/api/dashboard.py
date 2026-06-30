@@ -23,6 +23,7 @@ def get_novel_dashboard(
 ) -> NovelDashboardRead:
     counts = {
         "chapters": db.scalar(select(func.count()).select_from(Chapter).where(Chapter.novel_id == novel.id)),
+        "words": db.scalar(select(func.coalesce(func.sum(Chapter.word_count), 0)).where(Chapter.novel_id == novel.id)),
         "memory_items": db.scalar(select(func.count()).select_from(MemoryItem).where(MemoryItem.novel_id == novel.id)),
         "foreshadowing": db.scalar(select(func.count()).select_from(Foreshadowing).where(Foreshadowing.novel_id == novel.id)),
         "open_review_issues": db.scalar(
@@ -49,6 +50,12 @@ def get_novel_dashboard(
         .order_by(ReviewIssue.created_at.desc())
         .limit(5)
     ).all()
+    latest_chapters = db.scalars(
+        select(Chapter)
+        .where(Chapter.novel_id == novel.id)
+        .order_by(Chapter.chapter_index.desc())
+        .limit(5)
+    ).all()
 
     return NovelDashboardRead(
         novel={
@@ -58,6 +65,8 @@ def get_novel_dashboard(
             "status": novel.status,
             "target_words": novel.target_words,
             "current_chapter_index": novel.current_chapter_index,
+            "premise": novel.premise,
+            "brief": novel.brief,
         },
         counts=counts,
         latest_tasks=[
@@ -77,5 +86,16 @@ def get_novel_dashboard(
                 "message": issue.message,
             }
             for issue in open_issues
+        ],
+        latest_chapters=[
+            {
+                "id": str(chapter.id),
+                "chapter_index": chapter.chapter_index,
+                "title": chapter.title,
+                "status": chapter.status,
+                "word_count": chapter.word_count,
+                "summary": chapter.summary,
+            }
+            for chapter in latest_chapters
         ],
     )
