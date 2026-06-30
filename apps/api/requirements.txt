@@ -1,0 +1,10 @@
+fastapi
+uvicorn[standard]
+pydantic-settings
+SQLAlchemy
+alembic
+psycopg[binary]
+python-dotenv
+bcrypt
+PyJWT
+python-multipart
