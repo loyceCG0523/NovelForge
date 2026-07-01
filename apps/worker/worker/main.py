@@ -1,6 +1,6 @@
 """NovelForge 后台任务 Worker。
 
-API 负责创建任务并写入 Redis 队列；Worker 独立消费队列并执行耗时的 Agent 工作。
+API 负责创建任务并写入 Redis 队列：Worker 独立消费队列并执行耗时的 Agent 工作。
 当前版本使用模拟生成逻辑打通闭环，后续接入 LLM/LangGraph 时，优先替换各个
 handle_* 函数内部实现，而不是改变任务队列和任务状态协议。
 """
@@ -290,6 +290,8 @@ def consume_once(redis_client: Redis) -> bool:
         return False
 
     _, task_id = item
+    if isinstance(task_id, bytes):
+        task_id = task_id.decode("utf-8")
     with SessionLocal() as db:
         execute_task(db, task_id)
     return True

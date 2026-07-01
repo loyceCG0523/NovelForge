@@ -1,0 +1,15 @@
+{
+  "include": [
+    "apps/api",
+    "apps/worker"
+  ],
+  "extraPaths": [
+    "apps/api",
+    "apps/worker"
+  ],
+  "venvPath": "apps/api",
+  "venv": ".venv",
+  "reportMissingImports": "warning",
+  "reportMissingTypeStubs": false,
+  "pythonVersion": "3.11"
+}
