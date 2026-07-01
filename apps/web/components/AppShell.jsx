@@ -6,6 +6,7 @@ import { useEffect, useState } from "react";
 
 import { clearSession, getStoredUser, getToken } from "@/lib/api";
 
+// 主导航只保留真正的产品功能；创作过程状态放到工作台内部展示。
 const navItems = [
   { href: "/workbench", label: "创作工作台", icon: "□" },
   { href: "/projects", label: "作品管理", icon: "▦" },
@@ -15,12 +16,14 @@ const navItems = [
 ];
 
 export default function AppShell({ title, subtitle, actions, children }) {
+  // AppShell 统一承载鉴权检查、侧边栏、顶部标题区和页面内容容器。
   const pathname = usePathname();
   const router = useRouter();
   const [collapsed, setCollapsed] = useState(false);
   const [user, setUser] = useState(null);
 
   useEffect(() => {
+    // 没有 token 时直接回到登录页，避免未登录用户访问业务页面。
     if (!getToken()) {
       router.replace("/login");
       return;
@@ -29,6 +32,7 @@ export default function AppShell({ title, subtitle, actions, children }) {
   }, [router]);
 
   function handleLogout() {
+    // 退出只清理前端会话，后续如果引入服务端会话可在这里追加 revoke 请求。
     clearSession();
     router.replace("/login");
   }

@@ -1,3 +1,8 @@
+"""作品管理接口。
+
+这里的 Novel 是用户在平台上的“作品项目”，后续章节、记忆、伏笔和任务都挂在它下面。
+"""
+
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, status
@@ -21,6 +26,7 @@ def create_novel(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ) -> Novel:
+    """创建作品项目，并把当前登录用户记录为所有者。"""
     novel = Novel(owner_id=current_user.id, **payload.model_dump())
     db.add(novel)
     db.commit()
@@ -33,6 +39,7 @@ def list_novels(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ) -> list[Novel]:
+    """列出当前用户拥有的作品，避免跨用户暴露作品数据。"""
     statement = (
         select(Novel)
         .where(Novel.owner_id == current_user.id)
@@ -43,6 +50,7 @@ def list_novels(
 
 @router.get("/{novel_id}", response_model=NovelRead)
 def get_novel(novel: Novel = Depends(get_owned_novel)) -> Novel:
+    """读取单个作品；所有权检查由 get_owned_novel 统一完成。"""
     return novel
 
 
@@ -52,6 +60,7 @@ def update_novel(
     novel: Novel = Depends(get_owned_novel),
     db: Session = Depends(get_db),
 ) -> Novel:
+    """更新作品基础信息或起始需求 brief。"""
     for key, value in payload.model_dump(exclude_unset=True).items():
         setattr(novel, key, value)
     db.commit()

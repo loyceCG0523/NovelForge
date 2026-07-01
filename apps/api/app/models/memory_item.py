@@ -1,3 +1,5 @@
+"""结构化记忆表模型。"""
+
 from uuid import UUID
 
 from sqlalchemy import ForeignKey, Integer, String
@@ -9,6 +11,8 @@ from app.models.mixins import IdMixin, TimestampMixin
 
 
 class MemoryItem(IdMixin, TimestampMixin, Base):
+    """人物、地点、道具、设定等长期记忆条目。"""
+
     __tablename__ = "memory_items"
 
     novel_id: Mapped[UUID] = mapped_column(PgUUID(as_uuid=True), ForeignKey("novels.id"), index=True)

@@ -1,3 +1,9 @@
+"""工作台聚合接口。
+
+前端工作台需要同时展示作品概况、章节进度、风险提醒和后台任务状态。
+这些数据分散在多张表里，所以统一在这里做轻量聚合，避免前端发起过多请求。
+"""
+
 from fastapi import APIRouter, Depends
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
@@ -21,6 +27,7 @@ def get_novel_dashboard(
     novel: Novel = Depends(get_owned_novel),
     db: Session = Depends(get_db),
 ) -> NovelDashboardRead:
+    """返回作品工作台所需的汇总数据。"""
     counts = {
         "chapters": db.scalar(select(func.count()).select_from(Chapter).where(Chapter.novel_id == novel.id)),
         "words": db.scalar(select(func.coalesce(func.sum(Chapter.word_count), 0)).where(Chapter.novel_id == novel.id)),

@@ -1,3 +1,9 @@
+"""Alembic 迁移环境配置。
+
+这里把项目 .env 中的 DATABASE_URL 注入 Alembic，并加载 ORM metadata，
+让 `alembic revision --autogenerate` 能识别当前模型结构。
+"""
+
 from logging.config import fileConfig
 
 from alembic import context
@@ -18,6 +24,7 @@ target_metadata = Base.metadata
 
 
 def run_migrations_offline() -> None:
+    """离线模式生成 SQL，不直接连接数据库。"""
     context.configure(
         url=settings.database_url,
         target_metadata=target_metadata,
@@ -30,6 +37,7 @@ def run_migrations_offline() -> None:
 
 
 def run_migrations_online() -> None:
+    """在线模式连接数据库并执行迁移。"""
     connectable = engine_from_config(
         config.get_section(config.config_ini_section, {}),
         prefix="sqlalchemy.",

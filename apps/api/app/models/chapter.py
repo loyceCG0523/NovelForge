@@ -1,3 +1,5 @@
+"""章节表模型。"""
+
 from uuid import UUID
 
 from sqlalchemy import ForeignKey, Integer, String, Text, UniqueConstraint
@@ -9,6 +11,8 @@ from app.models.mixins import IdMixin, TimestampMixin
 
 
 class Chapter(IdMixin, TimestampMixin, Base):
+    """小说章节，保存正文、摘要、字数和生成上下文快照。"""
+
     __tablename__ = "chapters"
     __table_args__ = (UniqueConstraint("novel_id", "chapter_index", name="uq_chapters_novel_index"),)
 

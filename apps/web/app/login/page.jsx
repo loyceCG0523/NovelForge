@@ -7,12 +7,14 @@ import { useState } from "react";
 import { login, setSession } from "@/lib/api";
 
 export default function LoginPage() {
+  // 登录页成功后写入本地会话，并进入工作台。
   const router = useRouter();
   const [form, setForm] = useState({ email: "linchuan@example.com", password: "test123456" });
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
 
   async function handleSubmit(event) {
+    // 表单提交期间锁定按钮，避免重复登录请求。
     event.preventDefault();
     setError("");
     setLoading(true);

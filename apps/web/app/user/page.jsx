@@ -7,10 +7,12 @@ import MetricCard from "@/components/MetricCard";
 import { apiFetch, getStoredUser } from "@/lib/api";
 
 export default function UserPage() {
+  // 用户中心只展示账户概况；创作偏好已拆到个性化页面。
   const [user, setUser] = useState(null);
   const [projectCount, setProjectCount] = useState(0);
 
   useEffect(() => {
+    // 用户基础信息来自本地会话，作品数量实时请求后端。
     setUser(getStoredUser());
     apiFetch("/api/novels").then((items) => setProjectCount(items.length)).catch(() => setProjectCount(0));
   }, []);

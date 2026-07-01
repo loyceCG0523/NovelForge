@@ -1,3 +1,8 @@
+"""伏笔管理接口。
+
+伏笔记录用于追踪“何时埋下、何时推进、何时回收”，避免长篇生成中遗漏重要线索。
+"""
+
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, status
@@ -20,6 +25,7 @@ def create_foreshadowing(
     novel: Novel = Depends(get_owned_novel),
     db: Session = Depends(get_db),
 ) -> Foreshadowing:
+    """创建伏笔记录。"""
     item = Foreshadowing(novel_id=novel.id, **payload.model_dump())
     db.add(item)
     db.commit()
@@ -33,6 +39,7 @@ def list_foreshadowing(
     novel: Novel = Depends(get_owned_novel),
     db: Session = Depends(get_db),
 ) -> list[Foreshadowing]:
+    """列出作品伏笔，可按 planted/pending/resolved 等状态过滤。"""
     statement = select(Foreshadowing).where(Foreshadowing.novel_id == novel.id)
     if status_filter:
         statement = statement.where(Foreshadowing.status == status_filter)
@@ -47,6 +54,7 @@ def update_foreshadowing_status(
     novel: Novel = Depends(get_owned_novel),
     db: Session = Depends(get_db),
 ) -> Foreshadowing:
+    """更新伏笔状态，供工作台或 Agent 标记推进/回收进度。"""
     item = db.get(Foreshadowing, foreshadowing_id)
     if item is None or item.novel_id != novel.id:
         raise HTTPException(status_code=404, detail="Foreshadowing not found")

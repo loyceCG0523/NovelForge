@@ -1,3 +1,5 @@
+"""作品表模型。"""
+
 from uuid import UUID
 
 from sqlalchemy import ForeignKey, Integer, String, Text
@@ -9,6 +11,8 @@ from app.models.mixins import IdMixin, TimestampMixin
 
 
 class Novel(IdMixin, TimestampMixin, Base):
+    """用户创建的一部小说项目，是章节、任务和记忆的根实体。"""
+
     __tablename__ = "novels"
 
     owner_id: Mapped[UUID] = mapped_column(PgUUID(as_uuid=True), ForeignKey("users.id"), index=True)

@@ -1,3 +1,9 @@
+"""应用配置入口。
+
+所有环境变量都通过 Settings 读取，API 和 Worker 共用同一套配置，避免本地开发、
+测试和云端部署时出现“两个服务读到不同配置”的问题。
+"""
+
 from functools import lru_cache
 from pathlib import Path
 
@@ -8,9 +14,12 @@ ROOT_DIR = Path(__file__).resolve().parents[4]
 
 
 class Settings(BaseSettings):
+    """从项目根目录 .env 加载的运行时配置。"""
+
     app_env: str = "local"
     database_url: str
     redis_url: str
+    agent_task_queue: str = "novelforge:agent_tasks"
     s3_endpoint: str
     s3_bucket: str
     s3_access_key_id: str
@@ -31,6 +40,7 @@ class Settings(BaseSettings):
 
 @lru_cache
 def get_settings() -> Settings:
+    """缓存配置对象，避免每次依赖注入都重复解析 .env。"""
     return Settings()
 
 

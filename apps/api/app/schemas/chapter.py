@@ -1,9 +1,13 @@
+"""章节接口的数据契约。"""
+
 from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field
 
 
 class ChapterCreate(BaseModel):
+    """创建章节时前端提交的数据。"""
+
     chapter_index: int
     title: str = ""
     status: str = "draft"
@@ -13,6 +17,8 @@ class ChapterCreate(BaseModel):
 
 
 class ChapterUpdate(BaseModel):
+    """更新章节时允许局部提交的字段。"""
+
     chapter_index: int | None = None
     title: str | None = None
     status: str | None = None
@@ -22,6 +28,8 @@ class ChapterUpdate(BaseModel):
 
 
 class ChapterRead(BaseModel):
+    """返回给前端的章节完整视图。"""
+
     id: UUID
     novel_id: UUID
     chapter_index: int

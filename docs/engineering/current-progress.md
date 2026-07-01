@@ -479,3 +479,77 @@ http://127.0.0.1:3000
 ```
 
 这一步完成后，NovelForge 就会从“可维护小说项目的数据系统”进入“可自动推进创作任务的 Agent 系统”。
+
+## 10. Worker 任务执行框架进展
+
+已完成 Worker 基础框架：
+
+- 新增 `apps/worker`
+- 后端创建 Agent 任务时会写入 Redis 队列
+- Worker 可以消费 Redis 队列中的 `generation_tasks`
+- Worker 会将任务状态从 `queued` 更新为 `running`，最终更新为 `completed` 或 `failed`
+- 已支持模拟执行以下任务：
+  - `generate_chapter`
+  - `plan_novel`
+  - `sync_memory`
+  - `anti_ai_review`
+- `generate_chapter` 已接入 `ChapterContextBuilder`
+- 章节生成会把上下文快照写入 `chapters.context_snapshot`
+
+当前最重要的闭环已经跑通：
+
+```text
+前端点击 Agent 任务
+  -> FastAPI 创建 generation_tasks
+  -> Redis 队列
+  -> Worker 消费任务
+  -> 模拟生成章节
+  -> 写入 chapters
+  -> 更新 generation_tasks 为 completed
+  -> 工作台 dashboard 展示最新章节和任务状态
+```
+
+Worker 启动方式：
+
+```powershell
+conda activate novelforge-api
+cd D:\CodeProject\AgentProject\NovelForge\apps\worker
+python -m worker.main
+```
+
+只处理一个任务后退出：
+
+```powershell
+python -m worker.main --once
+```
+
+## 11. ChapterContextBuilder 进展
+
+已新增：
+
+```text
+apps/api/app/services/chapter_context_builder.py
+```
+
+当前 `ChapterContextBuilder` 会为目标章节组装：
+
+- 作品基础信息
+- 起始需求文档 `novel.brief`
+- 目标章节序号
+- 最近 3 章全文、摘要和状态
+- 结构化记忆
+- 未完成伏笔
+- 开放审校风险
+- 风格参考
+- 禁忌内容
+- 自动化策略
+- 连续性提醒
+- 反 AI 写作提醒
+
+Worker 的 `generate_chapter` 已改为基于该上下文生成模拟章节，并将完整上下文保存到：
+
+```text
+chapters.context_snapshot
+```
+
+章节管理页面也已展示上下文快照，便于查看每一章生成时到底使用了哪些信息。

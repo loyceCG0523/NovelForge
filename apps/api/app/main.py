@@ -1,3 +1,8 @@
+"""FastAPI 应用入口。
+
+这里只负责装配中间件和路由；业务逻辑放在 api/services/models 等模块里。
+"""
+
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
@@ -40,4 +45,5 @@ app.include_router(dashboard_router)
 
 @app.get("/")
 def root() -> dict[str, str]:
+    """API 根路径，用于快速确认服务已启动。"""
     return {"name": "NovelForge API", "status": "ok"}

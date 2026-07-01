@@ -1,3 +1,5 @@
+"""审校问题表模型。"""
+
 from uuid import UUID
 
 from sqlalchemy import ForeignKey, String, Text
@@ -9,6 +11,8 @@ from app.models.mixins import IdMixin, TimestampMixin
 
 
 class ReviewIssue(IdMixin, TimestampMixin, Base):
+    """连续性、风格、AI 味等审校风险记录。"""
+
     __tablename__ = "review_issues"
 
     novel_id: Mapped[UUID] = mapped_column(PgUUID(as_uuid=True), ForeignKey("novels.id"), index=True)

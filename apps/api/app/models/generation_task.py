@@ -1,3 +1,5 @@
+"""后台生成任务表模型。"""
+
 from uuid import UUID
 
 from sqlalchemy import ForeignKey, Integer, String, Text
@@ -9,6 +11,8 @@ from app.models.mixins import IdMixin, TimestampMixin
 
 
 class GenerationTask(IdMixin, TimestampMixin, Base):
+    """前端触发、Worker 消费的异步任务记录。"""
+
     __tablename__ = "generation_tasks"
 
     novel_id: Mapped[UUID] = mapped_column(PgUUID(as_uuid=True), ForeignKey("novels.id"), index=True)

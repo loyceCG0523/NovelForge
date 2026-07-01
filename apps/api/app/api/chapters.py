@@ -1,3 +1,9 @@
+"""章节管理接口。
+
+章节是 Agent 生成和人工编辑共同作用的主实体。除正文外，这里还保存章节摘要、
+字数和生成时使用的 context_snapshot，便于后续追踪“这一章为什么这样写”。
+"""
+
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, status
@@ -21,6 +27,7 @@ def create_chapter(
     novel: Novel = Depends(get_owned_novel),
     db: Session = Depends(get_db),
 ) -> Chapter:
+    """手动创建章节，并保证同一作品内 chapter_index 不重复。"""
     existing_chapter = db.scalar(
         select(Chapter).where(
             Chapter.novel_id == novel_id,
@@ -48,6 +55,7 @@ def list_chapters(
     novel: Novel = Depends(get_owned_novel),
     db: Session = Depends(get_db),
 ) -> list[Chapter]:
+    """按章节序号升序返回作品全部章节。"""
     statement = (
         select(Chapter)
         .where(Chapter.novel_id == novel_id)
@@ -62,6 +70,7 @@ def get_chapter(
     novel: Novel = Depends(get_owned_novel),
     db: Session = Depends(get_db),
 ) -> Chapter:
+    """读取章节详情，包含正文与上下文快照。"""
     chapter = db.get(Chapter, chapter_id)
     if chapter is None or chapter.novel_id != novel.id:
         raise HTTPException(status_code=404, detail="Chapter not found")
@@ -75,6 +84,7 @@ def update_chapter(
     novel: Novel = Depends(get_owned_novel),
     db: Session = Depends(get_db),
 ) -> Chapter:
+    """更新章节内容；正文变化时同步刷新字数统计。"""
     chapter = db.get(Chapter, chapter_id)
     if chapter is None or chapter.novel_id != novel.id:
         raise HTTPException(status_code=404, detail="Chapter not found")
@@ -107,6 +117,7 @@ def delete_chapter(
     novel: Novel = Depends(get_owned_novel),
     db: Session = Depends(get_db),
 ) -> None:
+    """删除章节记录。当前版本不级联删除相关任务或审校问题。"""
     chapter = db.get(Chapter, chapter_id)
     if chapter is None or chapter.novel_id != novel.id:
         raise HTTPException(status_code=404, detail="Chapter not found")

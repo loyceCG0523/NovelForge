@@ -1,3 +1,8 @@
+"""审校问题接口。
+
+ReviewIssue 用于记录连续性、伏笔遗漏、AI 句式、风格偏差等风险，并在工作台中实时展示。
+"""
+
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, status
@@ -21,6 +26,7 @@ def create_review_issue(
     novel: Novel = Depends(get_owned_novel),
     db: Session = Depends(get_db),
 ) -> ReviewIssue:
+    """新增审校风险，可绑定到具体章节，也可作为作品级风险存在。"""
     if payload.chapter_id is not None:
         chapter = db.get(Chapter, payload.chapter_id)
         if chapter is None or chapter.novel_id != novel.id:
@@ -39,6 +45,7 @@ def list_review_issues(
     novel: Novel = Depends(get_owned_novel),
     db: Session = Depends(get_db),
 ) -> list[ReviewIssue]:
+    """列出审校问题，可按 open/resolved/ignored 等状态过滤。"""
     statement = select(ReviewIssue).where(ReviewIssue.novel_id == novel.id)
     if status_filter:
         statement = statement.where(ReviewIssue.status == status_filter)
@@ -53,6 +60,7 @@ def update_review_issue_status(
     novel: Novel = Depends(get_owned_novel),
     db: Session = Depends(get_db),
 ) -> ReviewIssue:
+    """更新审校问题状态。"""
     issue = db.get(ReviewIssue, issue_id)
     if issue is None or issue.novel_id != novel.id:
         raise HTTPException(status_code=404, detail="Review issue not found")

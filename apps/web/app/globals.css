@@ -1,3 +1,4 @@
+/* 全局设计变量：颜色、阴影和基础排版尽量与 docs/product/ui-prototypes 保持一致。 */
 :root {
   --bg: #f5f7f8;
   --panel: #ffffff;
@@ -16,6 +17,7 @@
   --shadow: 0 14px 34px rgba(22, 35, 42, 0.08);
 }
 
+/* 基础重置：保证各浏览器里的盒模型和字体继承行为一致。 */
 * {
   box-sizing: border-box;
 }
@@ -50,6 +52,7 @@ select {
   color: var(--muted);
 }
 
+/* 登录/注册入口页：左侧品牌视觉，右侧表单。 */
 .entry-shell {
   min-height: 100vh;
   display: grid;
@@ -906,6 +909,29 @@ select {
 .chapter-content-input {
   min-height: 360px;
   line-height: 1.8;
+}
+
+.context-preview {
+  display: grid;
+  gap: 12px;
+  border-top: 1px solid var(--line);
+  padding-top: 16px;
+}
+
+.json-preview {
+  max-height: 360px;
+  overflow: auto;
+  margin: 0;
+  padding: 14px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #101820;
+  color: #d8ecef;
+  font-family: Consolas, "Cascadia Code", monospace;
+  font-size: 12px;
+  line-height: 1.55;
+  white-space: pre-wrap;
+  word-break: break-word;
 }
 
 @media (max-width: 1180px) {

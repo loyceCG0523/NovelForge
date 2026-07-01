@@ -9,6 +9,7 @@ import MetricCard from "@/components/MetricCard";
 import { apiFetch } from "@/lib/api";
 
 const defaultBrief = {
+  // 新用户只需要填写起始需求文档，后续系统会把这些字段转成作品 brief。
   work_type: "长篇小说",
   selling_points: "高概念悬疑、强反转、人物关系张力",
   protagonist: "背负旧案的调查者，理性但对记忆不完全可信",
@@ -20,6 +21,7 @@ const defaultBrief = {
 };
 
 export default function ProjectsPage() {
+  // 作品管理页负责“一名用户多部小说”的入口，也承担起始需求文档创建流程。
   const router = useRouter();
   const [projects, setProjects] = useState([]);
   const [form, setForm] = useState({
@@ -32,6 +34,7 @@ export default function ProjectsPage() {
   const [error, setError] = useState("");
 
   async function loadProjects() {
+    // 列出当前账号下的所有作品项目。
     try {
       setProjects(await apiFetch("/api/novels"));
     } catch (err) {
@@ -44,10 +47,12 @@ export default function ProjectsPage() {
   }, []);
 
   function updateForm(key, value) {
+    // 表单字段较多，统一用 key-value 方式更新，减少重复事件处理函数。
     setForm((current) => ({ ...current, [key]: value }));
   }
 
   async function createProject(event) {
+    // title/genre/target_words/premise 是 Novel 字段，其余内容打包进 brief JSON。
     event.preventDefault();
     setError("");
     const { title, genre, target_words, premise, ...brief } = form;

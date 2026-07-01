@@ -8,3 +8,4 @@ python-dotenv
 bcrypt
 PyJWT
 python-multipart
+redis

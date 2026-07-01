@@ -1,3 +1,8 @@
+"""生成任务接口。
+
+任务用于把前端操作转成后台可消费的 Agent 工作，例如生成章节、同步记忆、反 AI 审校。
+"""
+
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, status
@@ -22,6 +27,7 @@ def create_generation_task(
     novel: Novel = Depends(get_owned_novel),
     db: Session = Depends(get_db),
 ) -> GenerationTask:
+    """直接创建任务记录，不自动入队；主要用于调试或保留手动任务能力。"""
     if payload.chapter_id is not None:
         chapter = db.get(Chapter, payload.chapter_id)
         if chapter is None or chapter.novel_id != novel.id:
@@ -40,6 +46,7 @@ def create_agent_run(
     novel: Novel = Depends(get_owned_novel),
     db: Session = Depends(get_db),
 ) -> GenerationTask:
+    """创建 Agent 任务并推入 Redis 队列，由 Worker 异步执行。"""
     if payload.chapter_id is not None:
         chapter = db.get(Chapter, payload.chapter_id)
         if chapter is None or chapter.novel_id != novel.id:
@@ -53,6 +60,7 @@ def list_generation_tasks(
     novel: Novel = Depends(get_owned_novel),
     db: Session = Depends(get_db),
 ) -> list[GenerationTask]:
+    """列出作品任务，可按状态筛选 queued/running/completed/failed。"""
     statement = select(GenerationTask).where(GenerationTask.novel_id == novel.id)
     if status_filter:
         statement = statement.where(GenerationTask.status == status_filter)
@@ -66,6 +74,7 @@ def get_generation_task(
     novel: Novel = Depends(get_owned_novel),
     db: Session = Depends(get_db),
 ) -> GenerationTask:
+    """读取单个任务详情，用于前端查看进度或结果。"""
     task = db.get(GenerationTask, task_id)
     if task is None or task.novel_id != novel.id:
         raise HTTPException(status_code=404, detail="Task not found")

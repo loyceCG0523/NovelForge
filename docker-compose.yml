@@ -1,4 +1,5 @@
 services:
+  # 本地关系数据库；pgvector 扩展用于后续向量检索和语义记忆。
   postgres:
     image: pgvector/pgvector:pg16
     container_name: novelforge-postgres
@@ -17,6 +18,7 @@ services:
       timeout: 5s
       retries: 5
 
+  # 本地任务队列；API 把 Agent 任务写入 Redis，Worker 从 Redis 消费。
   redis:
     image: redis:7-alpine
     container_name: novelforge-redis
@@ -31,6 +33,7 @@ services:
       timeout: 5s
       retries: 5
 
+  # 本地 S3 兼容对象存储；后续用于保存样本文本、导出文件和大体积素材。
   minio:
     image: minio/minio:latest
     container_name: novelforge-minio
@@ -51,6 +54,7 @@ services:
       retries: 5
 
 volumes:
+  # 使用 Docker volume 保存数据，重启容器不会丢失本地开发数据。
   postgres_data:
   redis_data:
   minio_data:

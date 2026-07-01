@@ -1,3 +1,5 @@
+"""集中导出模型，便于 Alembic 和业务代码统一发现 ORM 类。"""
+
 from app.models.chapter import Chapter
 from app.models.foreshadowing import Foreshadowing
 from app.models.generation_task import GenerationTask

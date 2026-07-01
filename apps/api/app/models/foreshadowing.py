@@ -1,3 +1,5 @@
+"""伏笔表模型。"""
+
 from uuid import UUID
 
 from sqlalchemy import ForeignKey, Integer, String, Text
@@ -9,6 +11,8 @@ from app.models.mixins import IdMixin, TimestampMixin
 
 
 class Foreshadowing(IdMixin, TimestampMixin, Base):
+    """记录伏笔从埋设到回收的生命周期。"""
+
     __tablename__ = "foreshadowing"
 
     novel_id: Mapped[UUID] = mapped_column(PgUUID(as_uuid=True), ForeignKey("novels.id"), index=True)

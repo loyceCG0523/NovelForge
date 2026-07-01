@@ -1,7 +1,11 @@
+"""工作台聚合响应的数据契约。"""
+
 from pydantic import BaseModel
 
 
 class NovelDashboardRead(BaseModel):
+    """工作台页面一次请求需要的主要数据块。"""
+
     novel: dict
     counts: dict
     latest_chapters: list[dict]

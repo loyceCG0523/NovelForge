@@ -4,6 +4,7 @@ import AppShell from "@/components/AppShell";
 import MetricCard from "@/components/MetricCard";
 
 export default function SampleAnalysisPage() {
+  // 样本分析页目前是预留界面，后续会接入文本上传、切片和风格特征抽取。
   return (
     <AppShell
       title="样本分析"

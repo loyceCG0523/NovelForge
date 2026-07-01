@@ -3,6 +3,7 @@
 import AppShell from "@/components/AppShell";
 
 export default function PersonalizationPage() {
+  // 个性化页集中承载创作偏好和自动化策略，后续会写入 User.preferences。
   return (
     <AppShell
       title="个性化"

@@ -9,6 +9,7 @@ import MetricCard from "@/components/MetricCard";
 import { apiFetch } from "@/lib/api";
 
 function WorkbenchContent() {
+  // 工作台是成熟用户的主页面：它不直接编辑数据，而是聚合展示当前作品状态。
   const router = useRouter();
   const searchParams = useSearchParams();
   const [projects, setProjects] = useState([]);
@@ -25,6 +26,7 @@ function WorkbenchContent() {
   const brief = dashboard?.novel?.brief || selectedProject?.brief || {};
 
   async function loadProjects() {
+    // 先拿作品列表，再决定当前要展示 URL 指定作品还是默认第一部作品。
     const data = await apiFetch("/api/novels");
     setProjects(data);
     const nextId = novelIdFromUrl || selectedId || data[0]?.id || "";
@@ -33,6 +35,7 @@ function WorkbenchContent() {
   }
 
   async function loadDashboard(id) {
+    // Dashboard 由后端聚合，避免前端同时请求章节、任务、风险等多个接口。
     if (!id) return;
     setDashboard(await apiFetch(`/api/novels/${id}/dashboard`));
   }
@@ -46,6 +49,7 @@ function WorkbenchContent() {
   }, [selectedId]);
 
   async function runAgentTask(taskType = "generate_chapter") {
+    // 这里创建的是异步 Agent 任务；真正执行由 apps/worker 消费 Redis 队列完成。
     setMessage("");
     setError("");
     try {

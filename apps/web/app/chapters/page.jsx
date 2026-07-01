@@ -9,6 +9,7 @@ import MetricCard from "@/components/MetricCard";
 import { apiFetch } from "@/lib/api";
 
 const emptyChapter = {
+  // 手动新建章节时使用的默认草稿，Worker 生成章节也会落到同一张表。
   chapter_index: 1,
   title: "第一章 灰塔之下",
   status: "draft",
@@ -18,6 +19,7 @@ const emptyChapter = {
 };
 
 function ChaptersContent() {
+  // 章节页用于查看/编辑正文，同时展示 Worker 写入的上下文快照。
   const searchParams = useSearchParams();
   const [projects, setProjects] = useState([]);
   const [selectedNovelId, setSelectedNovelId] = useState("");
@@ -38,6 +40,7 @@ function ChaptersContent() {
   const totalWords = chapters.reduce((sum, chapter) => sum + chapter.word_count, 0);
 
   async function loadProjects() {
+    // 章节页也支持 URL 携带 novel 参数，方便从工作台跳转到当前作品。
     const data = await apiFetch("/api/novels");
     setProjects(data);
     const nextNovelId = searchParams.get("novel") || data[0]?.id || "";
@@ -46,6 +49,7 @@ function ChaptersContent() {
   }
 
   async function loadChapters(novelId) {
+    // 加载章节后默认选中第一章；没有章节时保持空草稿状态。
     if (!novelId) return;
     const data = await apiFetch(`/api/novels/${novelId}/chapters`);
     setChapters(data);
@@ -67,16 +71,19 @@ function ChaptersContent() {
   }, [selectedChapter]);
 
   function updateDraft(key, value) {
+    // 草稿编辑统一入口，便于后续增加脏状态提示或自动保存。
     setDraft((current) => ({ ...current, [key]: value }));
   }
 
   function startNewChapter() {
+    // 新章序号从当前最大章节号递增，避免删除章节后序号回退。
     const nextIndex = chapters.length ? Math.max(...chapters.map((chapter) => chapter.chapter_index)) + 1 : 1;
     setSelectedChapterId("");
     setDraft({ ...emptyChapter, chapter_index: nextIndex, title: `第 ${nextIndex} 章` });
   }
 
   async function saveChapter(event) {
+    // 选中已有章节时 PATCH；没有选中章节时 POST 创建。
     event.preventDefault();
     setError("");
     setMessage("");
@@ -183,6 +190,23 @@ function ChaptersContent() {
                 </div>
                 <div className="field"><label>章节摘要</label><textarea value={draft.summary || ""} onChange={(e) => updateDraft("summary", e.target.value)} /></div>
                 <div className="field"><label>正文草稿</label><textarea className="chapter-content-input" value={draft.content || ""} onChange={(e) => updateDraft("content", e.target.value)} /></div>
+                <section className="context-preview">
+                  <div className="panel-title">上下文快照</div>
+                  <div className="panel-subtitle">Worker 生成本章时使用的 ChapterContext，会随章节一起保存。</div>
+                  {draft.context_snapshot?.schema_version ? (
+                    <>
+                      <div className="grid-4">
+                        <div className="mini-stat"><span>最近章节</span><strong>{draft.context_snapshot.stats?.recent_chapter_count ?? 0}</strong></div>
+                        <div className="mini-stat"><span>结构化记忆</span><strong>{draft.context_snapshot.stats?.memory_count ?? 0}</strong></div>
+                        <div className="mini-stat"><span>伏笔</span><strong>{draft.context_snapshot.stats?.foreshadowing_count ?? 0}</strong></div>
+                        <div className="mini-stat"><span>开放风险</span><strong>{draft.context_snapshot.stats?.open_review_issue_count ?? 0}</strong></div>
+                      </div>
+                      <pre className="json-preview">{JSON.stringify(draft.context_snapshot, null, 2)}</pre>
+                    </>
+                  ) : (
+                    <div className="hint-panel">当前章节还没有上下文快照。通过工作台启动章节 Agent 后，Worker 会自动写入。</div>
+                  )}
+                </section>
               </div>
             </form>
           </section>

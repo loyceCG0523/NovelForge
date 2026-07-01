@@ -19,6 +19,7 @@ depends_on: str | Sequence[str] | None = None
 
 
 def upgrade() -> None:
+    """创建 NovelForge 首批核心业务表。"""
     op.execute("CREATE EXTENSION IF NOT EXISTS vector")
 
     op.create_table(
@@ -151,6 +152,7 @@ def upgrade() -> None:
 
 
 def downgrade() -> None:
+    """按依赖顺序删除首批核心业务表。"""
     op.drop_index(op.f("ix_review_issues_status"), table_name="review_issues")
     op.drop_index(op.f("ix_review_issues_severity"), table_name="review_issues")
     op.drop_index(op.f("ix_review_issues_novel_id"), table_name="review_issues")

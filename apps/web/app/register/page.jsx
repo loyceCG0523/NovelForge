@@ -7,12 +7,14 @@ import { useState } from "react";
 import { register, setSession } from "@/lib/api";
 
 export default function RegisterPage() {
+  // 注册成功后直接进入作品管理，符合“先填起始需求文档”的产品流程。
   const router = useRouter();
   const [form, setForm] = useState({ email: "", display_name: "", password: "" });
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
 
   async function handleSubmit(event) {
+    // 注册接口会同时返回 token，因此无需再额外登录一次。
     event.preventDefault();
     setError("");
     setLoading(true);
