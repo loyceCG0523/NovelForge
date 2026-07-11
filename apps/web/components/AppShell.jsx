@@ -9,10 +9,11 @@ import { clearSession, getStoredUser, getToken } from "@/lib/api";
 // 主导航只保留真正的产品功能；创作过程状态放到工作台内部展示。
 const navItems = [
   { href: "/workbench", label: "创作工作台", icon: "□" },
+  { href: "/story-events", label: "剧情事件", icon: "▥" },
+  { href: "/chapters", label: "章节管理", icon: "▤" },
   { href: "/projects", label: "作品管理", icon: "▦" },
   { href: "/sample-analysis", label: "样本分析", icon: "▧" },
-  { href: "/personalization", label: "个性化", icon: "●" },
-  { href: "/user", label: "用户中心", icon: "◐" }
+  { href: "/personalization", label: "设置", icon: "●" }
 ];
 
 export default function AppShell({ title, subtitle, actions, children }) {

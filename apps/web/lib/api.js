@@ -12,6 +12,11 @@ export function setSession(token, user) {
   localStorage.setItem("novelforge_user", JSON.stringify(user));
 }
 
+export function setStoredUser(user) {
+  // 更新偏好后只刷新用户缓存，不改动现有 token。
+  localStorage.setItem("novelforge_user", JSON.stringify(user));
+}
+
 export function clearSession() {
   // 登录失效或用户退出时清理前端会话。
   localStorage.removeItem("novelforge_token");
@@ -28,7 +33,8 @@ export function getStoredUser() {
 export async function apiFetch(path, options = {}) {
   // 所有前端请求统一经过这里，集中处理 JSON、鉴权头和错误提示。
   const headers = new Headers(options.headers || {});
-  if (!headers.has("Content-Type") && options.body) headers.set("Content-Type", "application/json");
+  const isFormData = typeof FormData !== "undefined" && options.body instanceof FormData;
+  if (!headers.has("Content-Type") && options.body && !isFormData) headers.set("Content-Type", "application/json");
   const token = getToken();
   if (token) headers.set("Authorization", `Bearer ${token}`);
 
@@ -51,6 +57,50 @@ export async function apiFetch(path, options = {}) {
 
   if (response.status === 204) return null;
   return response.json();
+}
+
+function getDownloadFilename(response, fallback) {
+  // 后端使用 Content-Disposition 传文件名；解析失败时用前端兜底名。
+  const disposition = response.headers.get("Content-Disposition") || "";
+  const encodedMatch = disposition.match(/filename\*=UTF-8''([^;]+)/i);
+  if (encodedMatch?.[1]) return decodeURIComponent(encodedMatch[1]);
+  const plainMatch = disposition.match(/filename="?([^";]+)"?/i);
+  return plainMatch?.[1] || fallback;
+}
+
+export async function apiDownload(path, fallbackFilename = "novelforge-export.txt") {
+  // 文件下载也需要携带登录 Token，但响应体是 Blob，不走 apiFetch 的 JSON 解析。
+  const headers = new Headers();
+  const token = getToken();
+  if (token) headers.set("Authorization", `Bearer ${token}`);
+
+  const response = await fetch(`${API_BASE_URL}${path}`, {
+    headers,
+    cache: "no-store"
+  });
+
+  if (!response.ok) {
+    let message = `Request failed: ${response.status}`;
+    try {
+      const error = await response.json();
+      message = typeof error.detail === "string" ? error.detail : JSON.stringify(error.detail || error);
+    } catch {
+      message = await response.text();
+    }
+    throw new Error(message);
+  }
+
+  const blob = await response.blob();
+  const filename = getDownloadFilename(response, fallbackFilename);
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = filename;
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
+  URL.revokeObjectURL(url);
+  return filename;
 }
 
 export async function register(payload) {

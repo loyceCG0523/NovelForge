@@ -17,7 +17,7 @@ class GenerationTaskRead(BaseModel):
     """返回给前端的任务状态与执行结果。"""
 
     id: UUID
-    novel_id: UUID
+    novel_id: UUID | None
     chapter_id: UUID | None
     task_type: str
     status: str

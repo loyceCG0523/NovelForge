@@ -1,12 +1,12 @@
 "use client";
 
 import { Suspense, useEffect, useMemo, useState } from "react";
-import { useSearchParams } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 
 import AppShell from "@/components/AppShell";
 import EmptyState from "@/components/EmptyState";
-import MetricCard from "@/components/MetricCard";
-import { apiFetch } from "@/lib/api";
+import ReviewIssuePanel from "@/components/ReviewIssuePanel";
+import { apiDownload, apiFetch } from "@/lib/api";
 
 const emptyChapter = {
   // 手动新建章节时使用的默认草稿，Worker 生成章节也会落到同一张表。
@@ -20,6 +20,7 @@ const emptyChapter = {
 
 function ChaptersContent() {
   // 章节页用于查看/编辑正文，同时展示 Worker 写入的上下文快照。
+  const router = useRouter();
   const searchParams = useSearchParams();
   const [projects, setProjects] = useState([]);
   const [selectedNovelId, setSelectedNovelId] = useState("");
@@ -28,6 +29,12 @@ function ChaptersContent() {
   const [draft, setDraft] = useState(emptyChapter);
   const [message, setMessage] = useState("");
   const [error, setError] = useState("");
+  const [contentExpanded, setContentExpanded] = useState(false);
+  const [contextExpanded, setContextExpanded] = useState(false);
+  const [chapterIssues, setChapterIssues] = useState([]);
+  const [pendingDeleteChapter, setPendingDeleteChapter] = useState(null);
+  const [deletingChapterId, setDeletingChapterId] = useState("");
+  const [exportingFormat, setExportingFormat] = useState("");
 
   const selectedProject = useMemo(
     () => projects.find((project) => project.id === selectedNovelId),
@@ -48,14 +55,23 @@ function ChaptersContent() {
     return nextNovelId;
   }
 
-  async function loadChapters(novelId) {
+  async function loadChapters(novelId, preferredChapterId = "") {
     // 加载章节后默认选中第一章；没有章节时保持空草稿状态。
     if (!novelId) return;
     const data = await apiFetch(`/api/novels/${novelId}/chapters`);
     setChapters(data);
-    const nextChapter = data[0];
+    const nextChapter = data.find((chapter) => chapter.id === preferredChapterId) || data[0];
     setSelectedChapterId(nextChapter?.id || "");
     setDraft(nextChapter || { ...emptyChapter, chapter_index: data.length + 1 });
+    if (nextChapter?.id) await loadChapterIssues(novelId, nextChapter.id);
+  }
+
+  async function loadChapterIssues(novelId, chapterId) {
+    if (!novelId || !chapterId) {
+      setChapterIssues([]);
+      return;
+    }
+    setChapterIssues(await apiFetch(`/api/novels/${novelId}/reviews?chapter_id=${chapterId}`));
   }
 
   useEffect(() => {
@@ -67,7 +83,12 @@ function ChaptersContent() {
   }, [selectedNovelId]);
 
   useEffect(() => {
-    if (selectedChapter) setDraft(selectedChapter);
+    if (selectedChapter) {
+      setDraft(selectedChapter);
+      setContentExpanded(false);
+      setContextExpanded(false);
+      if (selectedNovelId) loadChapterIssues(selectedNovelId, selectedChapter.id).catch((err) => setError(err.message));
+    }
   }, [selectedChapter]);
 
   function updateDraft(key, value) {
@@ -80,6 +101,8 @@ function ChaptersContent() {
     const nextIndex = chapters.length ? Math.max(...chapters.map((chapter) => chapter.chapter_index)) + 1 : 1;
     setSelectedChapterId("");
     setDraft({ ...emptyChapter, chapter_index: nextIndex, title: `第 ${nextIndex} 章` });
+    setContentExpanded(false);
+    setContextExpanded(false);
   }
 
   async function saveChapter(event) {
@@ -108,21 +131,43 @@ function ChaptersContent() {
       setMessage(`已保存：第 ${saved.chapter_index} 章`);
       await loadChapters(selectedNovelId);
       setSelectedChapterId(saved.id);
+      await loadChapterIssues(selectedNovelId, saved.id);
     } catch (err) {
       setError(err.message);
     }
   }
 
   async function deleteChapter() {
-    if (!selectedChapterId) return;
+    if (!pendingDeleteChapter) return;
     setError("");
     setMessage("");
+    setDeletingChapterId(pendingDeleteChapter.id);
     try {
-      await apiFetch(`/api/novels/${selectedNovelId}/chapters/${selectedChapterId}`, { method: "DELETE" });
+      await apiFetch(`/api/novels/${selectedNovelId}/chapters/${pendingDeleteChapter.id}`, { method: "DELETE" });
       setMessage("章节已删除");
+      setPendingDeleteChapter(null);
       await loadChapters(selectedNovelId);
     } catch (err) {
       setError(err.message);
+    } finally {
+      setDeletingChapterId("");
+    }
+  }
+
+  async function exportSelectedNovel(format) {
+    if (!selectedNovelId) return;
+    setError("");
+    setMessage("");
+    setExportingFormat(format);
+    try {
+      await apiDownload(
+        `/api/novels/${selectedNovelId}/export?format=${format}`,
+        `${selectedProject?.title || "novel"}.${format === "txt" ? "txt" : "md"}`
+      );
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setExportingFormat("");
     }
   }
 
@@ -135,6 +180,9 @@ function ChaptersContent() {
           <select className="secondary-button" value={selectedNovelId} onChange={(event) => setSelectedNovelId(event.target.value)}>
             {projects.map((project) => <option key={project.id} value={project.id}>{project.title}</option>)}
           </select>
+          <button className="secondary-button" disabled={!selectedNovelId || exportingFormat === "txt"} onClick={() => exportSelectedNovel("txt")}>导出 TXT</button>
+          <button className="secondary-button" disabled={!selectedNovelId || exportingFormat === "markdown"} onClick={() => exportSelectedNovel("markdown")}>导出 MD</button>
+          <button className="secondary-button" disabled={!selectedNovelId} onClick={() => router.push(`/chapter-canvas?novel=${selectedNovelId}`)}>章节画布</button>
           <button className="primary-button" disabled={!selectedNovelId} onClick={startNewChapter}>新建章节</button>
         </>
       }
@@ -143,19 +191,19 @@ function ChaptersContent() {
         <EmptyState title="还没有作品" description="请先在作品管理里创建作品，再维护章节。" action={<a className="primary-button" href="/projects">去创建作品</a>} />
       ) : (
         <>
-          <section className="grid-4">
-            <MetricCard label="当前作品" value={selectedProject?.title || "-"} note={selectedProject?.genre || "未分类"} />
-            <MetricCard label="章节数" value={`${chapters.length} 章`} note="当前作品已保存章节" tone="green" />
-            <MetricCard label="正文总字数" value={`${totalWords.toLocaleString()} 字`} note="按章节正文统计" tone="purple" />
-            <MetricCard label="当前状态" value={draft.status || "-"} note="正在编辑的章节状态" tone="yellow" />
-          </section>
-
           {(message || error) ? <div className={error ? "error-box" : "hint-panel"}>{error || message}</div> : null}
 
           <section className="chapter-layout">
             <aside className="panel chapter-list">
               <div className="panel-header">
-                <div><div className="panel-title">章节列表</div><div className="panel-subtitle">按章节序号排序。</div></div>
+                <div>
+                  <div className="panel-title">章节列表</div>
+                  <div className="panel-subtitle">{selectedProject?.title || "当前作品"} · {selectedProject?.genre || "未分类"}</div>
+                </div>
+                <div className="canvas-nav-stats">
+                  <span>{chapters.length} 章</span>
+                  <span>{totalWords.toLocaleString()} 字</span>
+                </div>
               </div>
               <div className="panel-body stack-list">
                 {chapters.length === 0 ? (
@@ -174,42 +222,119 @@ function ChaptersContent() {
               </div>
             </aside>
 
-            <form className="panel chapter-editor" onSubmit={saveChapter}>
+            <form className={`panel chapter-editor ${contentExpanded ? "content-expanded" : ""} ${contextExpanded ? "context-expanded" : ""}`} onSubmit={saveChapter}>
               <div className="panel-header">
                 <div><div className="panel-title">{selectedChapterId ? "编辑章节" : "新建章节"}</div><div className="panel-subtitle">后续 Agent 生成的草稿也会回写到这里。</div></div>
                 <div className="inline-actions">
-                  {selectedChapterId ? <button type="button" className="danger-button" onClick={deleteChapter}>删除</button> : null}
+                  {selectedChapterId ? <button type="button" className="danger-button" onClick={() => setPendingDeleteChapter(selectedChapter)}>删除</button> : null}
                   <button className="primary-button">保存章节</button>
                 </div>
               </div>
               <div className="panel-body form-grid">
-                <div className="grid-3">
+                <div className="grid-3 chapter-meta-fields">
                   <div className="field"><label>章节序号</label><input type="number" value={draft.chapter_index} onChange={(e) => updateDraft("chapter_index", e.target.value)} /></div>
                   <div className="field"><label>章节标题</label><input value={draft.title || ""} onChange={(e) => updateDraft("title", e.target.value)} /></div>
                   <div className="field"><label>状态</label><select value={draft.status || "draft"} onChange={(e) => updateDraft("status", e.target.value)}><option value="draft">draft</option><option value="generating">generating</option><option value="reviewing">reviewing</option><option value="done">done</option></select></div>
                 </div>
-                <div className="field"><label>章节摘要</label><textarea value={draft.summary || ""} onChange={(e) => updateDraft("summary", e.target.value)} /></div>
-                <div className="field"><label>正文草稿</label><textarea className="chapter-content-input" value={draft.content || ""} onChange={(e) => updateDraft("content", e.target.value)} /></div>
-                <section className="context-preview">
-                  <div className="panel-title">上下文快照</div>
-                  <div className="panel-subtitle">Worker 生成本章时使用的 ChapterContext，会随章节一起保存。</div>
+                <div className="field chapter-summary-field"><label>章节摘要</label><textarea value={draft.summary || ""} onChange={(e) => updateDraft("summary", e.target.value)} /></div>
+                {draft.event_plan ? (
+                  <section className="event-plan-summary">
+                    <div>
+                      <span>所属剧情事件</span>
+                      <strong>{draft.event_plan.story_event_title || "未命名事件"}</strong>
+                    </div>
+                    <div>
+                      <span>本章功能</span>
+                      <strong>{draft.event_plan.function || "推进"}</strong>
+                    </div>
+                    <p>{draft.event_plan.core_event || "暂无事件计划。"}</p>
+                    {draft.event_plan.ending_hook ? <em>章末钩子：{draft.event_plan.ending_hook}</em> : null}
+                  </section>
+                ) : null}
+
+                <section className="collapse-block chapter-content-block">
+                  <div className="collapse-head">
+                    <div>
+                      <div className="panel-title">正文草稿</div>
+                      <div className="panel-subtitle">完整正文默认收起，适合在章节画布中阅读。</div>
+                    </div>
+                    <div className="inline-actions">
+                      <span className="tag">{(draft.content || "").length.toLocaleString()} 字符</span>
+                      <button type="button" className="secondary-button" onClick={() => router.push(`/chapter-canvas?novel=${selectedNovelId}`)}>去画布阅读</button>
+                      <button type="button" className="ghost-button" onClick={() => setContentExpanded((value) => !value)}>
+                        {contentExpanded ? "收起正文" : "展开正文"}
+                      </button>
+                    </div>
+                  </div>
+                  {contentExpanded ? (
+                    <div className="field collapse-body">
+                      <textarea className="chapter-content-input" value={draft.content || ""} onChange={(e) => updateDraft("content", e.target.value)} />
+                    </div>
+                  ) : (
+                    <div className="chapter-content-summary">
+                      {(draft.content || "").trim() ? `${draft.content.trim().slice(0, 160)}${draft.content.trim().length > 160 ? "..." : ""}` : "当前章节还没有正文内容。"}
+                    </div>
+                  )}
+                </section>
+
+                <section className="collapse-block context-block">
+                  <div className="collapse-head">
+                    <div>
+                      <div className="panel-title">上下文快照</div>
+                      <div className="panel-subtitle">Worker 生成本章时使用的 ChapterContext，会随章节一起保存。</div>
+                    </div>
+                    <button type="button" className="ghost-button" onClick={() => setContextExpanded((value) => !value)}>
+                      {contextExpanded ? "收起快照" : "展开快照"}
+                    </button>
+                  </div>
                   {draft.context_snapshot?.schema_version ? (
                     <>
                       <div className="grid-4">
                         <div className="mini-stat"><span>最近章节</span><strong>{draft.context_snapshot.stats?.recent_chapter_count ?? 0}</strong></div>
                         <div className="mini-stat"><span>结构化记忆</span><strong>{draft.context_snapshot.stats?.memory_count ?? 0}</strong></div>
                         <div className="mini-stat"><span>伏笔</span><strong>{draft.context_snapshot.stats?.foreshadowing_count ?? 0}</strong></div>
-                        <div className="mini-stat"><span>开放风险</span><strong>{draft.context_snapshot.stats?.open_review_issue_count ?? 0}</strong></div>
+                        <div className="mini-stat"><span>审校记录</span><strong>{draft.context_snapshot.stats?.open_review_issue_count ?? 0}</strong></div>
                       </div>
-                      <pre className="json-preview">{JSON.stringify(draft.context_snapshot, null, 2)}</pre>
+                      {contextExpanded ? <pre className="json-preview">{JSON.stringify(draft.context_snapshot, null, 2)}</pre> : null}
                     </>
                   ) : (
-                    <div className="hint-panel">当前章节还没有上下文快照。通过工作台启动章节 Agent 后，Worker 会自动写入。</div>
+                    <div className="hint-panel">当前章节还没有上下文快照。通过工作台开始自动生成后，Worker 会自动写入。</div>
                   )}
                 </section>
               </div>
             </form>
           </section>
+
+          {selectedChapterId ? (
+            <ReviewIssuePanel
+              title="本章审校记录"
+              subtitle="当前章节关联的连续性、风格和自动修复记录。"
+              issues={chapterIssues}
+              emptyTitle="本章暂无审校记录"
+              emptyDescription="章节生成后的系统审校结果会显示在这里。"
+            />
+          ) : null}
+          {pendingDeleteChapter ? (
+            <div className="modal-backdrop" role="presentation" onClick={() => setPendingDeleteChapter(null)}>
+              <div className="confirm-dialog" role="dialog" aria-modal="true" aria-labelledby="delete-chapter-title" onClick={(event) => event.stopPropagation()}>
+                <div>
+                  <div className="panel-title" id="delete-chapter-title">删除章节</div>
+                  <div className="panel-subtitle">删除后，该章节相关记忆、审校记录和事件计划会同步清理。</div>
+                </div>
+                <div className="delete-preview">
+                  <span>第 {pendingDeleteChapter.chapter_index} 章</span>
+                  <strong>{pendingDeleteChapter.title || "未命名章节"}</strong>
+                  <p>{pendingDeleteChapter.summary || "该章节暂无摘要。"}</p>
+                </div>
+                <div className="inline-actions dialog-actions">
+                  <button className="secondary-button" disabled={deletingChapterId === pendingDeleteChapter.id} onClick={() => setPendingDeleteChapter(null)}>取消</button>
+                  <button className="danger-button" disabled={deletingChapterId === pendingDeleteChapter.id} onClick={deleteChapter}>
+                    {deletingChapterId === pendingDeleteChapter.id ? "删除中" : "确认删除"}
+                  </button>
+                </div>
+              </div>
+            </div>
+          ) : null}
         </>
       )}
     </AppShell>

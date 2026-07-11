@@ -9,3 +9,8 @@ bcrypt
 PyJWT
 python-multipart
 redis
+httpx
+langchain
+langgraph
+json-repair
+minio

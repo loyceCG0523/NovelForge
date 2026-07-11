@@ -1,0 +1,381 @@
+"use client";
+
+import { Suspense, useEffect, useMemo, useState } from "react";
+import { useRouter, useSearchParams } from "next/navigation";
+
+import AppShell from "@/components/AppShell";
+import EmptyState from "@/components/EmptyState";
+import ReviewIssuePanel from "@/components/ReviewIssuePanel";
+import { apiFetch } from "@/lib/api";
+
+function statusText(status) {
+  return {
+    planned: "待生成",
+    generating: "生成中",
+    generated: "已生成",
+    revised: "已修订",
+    completed: "已完成",
+    failed: "失败",
+    done: "已完成",
+    open: "系统处理中",
+    system_deferred: "后续自动处理",
+    quality_note: "质量建议",
+    resolved: "已解决",
+    ignored: "已忽略"
+  }[status] || status || "未知";
+}
+
+function scoreTone(score) {
+  if (score >= 85) return "green";
+  if (score >= 70) return "yellow";
+  return "red";
+}
+
+function StoryEventsContent() {
+  // 剧情事件页是事件级生成的控制台：查看计划、重跑单章、从某章继续。
+  const router = useRouter();
+  const searchParams = useSearchParams();
+  const [projects, setProjects] = useState([]);
+  const [selectedNovelId, setSelectedNovelId] = useState("");
+  const [events, setEvents] = useState([]);
+  const [selectedEventId, setSelectedEventId] = useState("");
+  const [eventDetail, setEventDetail] = useState(null);
+  const [trackingTaskId, setTrackingTaskId] = useState("");
+  const [busyPlanId, setBusyPlanId] = useState("");
+  const [message, setMessage] = useState("");
+  const [error, setError] = useState("");
+
+  const selectedProject = useMemo(
+    () => projects.find((project) => project.id === selectedNovelId),
+    [projects, selectedNovelId]
+  );
+
+  async function loadProjects() {
+    const data = await apiFetch("/api/novels");
+    setProjects(data);
+    const nextNovelId = searchParams.get("novel") || selectedNovelId || data[0]?.id || "";
+    setSelectedNovelId(nextNovelId);
+    return nextNovelId;
+  }
+
+  async function loadEvents(novelId) {
+    if (!novelId) return "";
+    const data = await apiFetch(`/api/novels/${novelId}/story-events`);
+    setEvents(data);
+    const eventFromUrl = searchParams.get("event");
+    const nextEventId = eventFromUrl || selectedEventId || data[0]?.id || "";
+    setSelectedEventId(nextEventId);
+    return nextEventId;
+  }
+
+  async function loadEventDetail(novelId, eventId) {
+    if (!novelId || !eventId) {
+      setEventDetail(null);
+      return;
+    }
+    setEventDetail(await apiFetch(`/api/novels/${novelId}/story-events/${eventId}`));
+  }
+
+  useEffect(() => {
+    loadProjects()
+      .then((novelId) => loadEvents(novelId).then((eventId) => loadEventDetail(novelId, eventId)))
+      .catch((err) => setError(err.message));
+  }, [searchParams]);
+
+  useEffect(() => {
+    if (!selectedNovelId) return;
+    loadEvents(selectedNovelId)
+      .then((eventId) => loadEventDetail(selectedNovelId, eventId))
+      .catch((err) => setError(err.message));
+  }, [selectedNovelId]);
+
+  useEffect(() => {
+    if (selectedNovelId && selectedEventId) {
+      loadEventDetail(selectedNovelId, selectedEventId).catch((err) => setError(err.message));
+    }
+  }, [selectedEventId]);
+
+  useEffect(() => {
+    if (!selectedNovelId || !selectedEventId || !trackingTaskId) return undefined;
+
+    let stopped = false;
+    async function pollTask() {
+      try {
+        const task = await apiFetch(`/api/novels/${selectedNovelId}/tasks/${trackingTaskId}`);
+        await loadEventDetail(selectedNovelId, selectedEventId);
+        if (stopped) return;
+        if (task.status === "completed") {
+          setMessage("剧情事件任务已完成，事件详情已刷新");
+          setTrackingTaskId("");
+          setBusyPlanId("");
+          await loadEvents(selectedNovelId);
+        } else if (task.status === "failed") {
+          setError(`剧情事件任务失败：${task.error_message || "请查看 Worker 日志"}`);
+          setTrackingTaskId("");
+          setBusyPlanId("");
+        } else {
+          setMessage(`${task.result_payload?.graph_status || "剧情事件任务"}：${task.progress || 0}%`);
+        }
+      } catch (err) {
+        if (!stopped) {
+          setError(err.message);
+          setTrackingTaskId("");
+          setBusyPlanId("");
+        }
+      }
+    }
+
+    pollTask();
+    const timer = window.setInterval(pollTask, 2500);
+    return () => {
+      stopped = true;
+      window.clearInterval(timer);
+    };
+  }, [selectedNovelId, selectedEventId, trackingTaskId]);
+
+  async function rerunPlan(plan) {
+    setMessage("");
+    setError("");
+    setBusyPlanId(plan.id);
+    try {
+      const task = await apiFetch(`/api/novels/${selectedNovelId}/story-events/${selectedEventId}/plans/${plan.id}/rerun`, {
+        method: "POST"
+      });
+      setTrackingTaskId(task.id);
+      setMessage(`已创建第 ${plan.chapter_index} 章重跑任务`);
+    } catch (err) {
+      setError(err.message);
+      setBusyPlanId("");
+    }
+  }
+
+  async function continueFrom(plan) {
+    setMessage("");
+    setError("");
+    setBusyPlanId(plan.id);
+    try {
+      const task = await apiFetch(`/api/novels/${selectedNovelId}/story-events/${selectedEventId}/continue?from_chapter_index=${plan.chapter_index}`, {
+        method: "POST"
+      });
+      setTrackingTaskId(task.id);
+      setMessage(`已创建从第 ${plan.chapter_index} 章继续生成的任务`);
+    } catch (err) {
+      setError(err.message);
+      setBusyPlanId("");
+    }
+  }
+
+  async function checkQuality() {
+    if (!selectedNovelId || !selectedEventId) return;
+    setMessage("");
+    setError("");
+    try {
+      const task = await apiFetch(`/api/novels/${selectedNovelId}/story-events/${selectedEventId}/quality-check`, {
+        method: "POST"
+      });
+      setTrackingTaskId(task.id);
+      setMessage("已创建事件级质量审校任务");
+    } catch (err) {
+      setError(err.message);
+    }
+  }
+
+  return (
+    <AppShell
+      title="剧情事件"
+      subtitle="查看闭环大事件、章节计划、质量建议和局部重跑"
+      actions={
+        <>
+          <select className="secondary-button" value={selectedNovelId} onChange={(event) => setSelectedNovelId(event.target.value)}>
+            {projects.map((project) => <option key={project.id} value={project.id}>{project.title}</option>)}
+          </select>
+          <button className="secondary-button" disabled={!selectedNovelId} onClick={() => router.push(`/workbench?novel=${selectedNovelId}`)}>返回工作台</button>
+          <button className="secondary-button" disabled={!selectedEventId || Boolean(trackingTaskId)} onClick={checkQuality}>重新审校事件</button>
+          <button className="primary-button" disabled={!selectedNovelId} onClick={() => router.push(`/chapters?novel=${selectedNovelId}`)}>章节管理</button>
+        </>
+      }
+    >
+      {projects.length === 0 ? (
+        <EmptyState title="还没有作品" description="请先创建作品，再生成剧情事件。" action={<a className="primary-button" href="/projects">去创建作品</a>} />
+      ) : events.length === 0 ? (
+        <EmptyState title="暂无剧情事件" description="先在工作台点击“开始自动生成”，系统会规划并生成 6-12 章闭环剧情。" action={<button className="primary-button" onClick={() => router.push(`/workbench?novel=${selectedNovelId}`)}>去工作台生成</button>} />
+      ) : (
+        <section className="event-console">
+          <aside className="panel event-sidebar">
+            <div className="panel-header">
+              <div>
+                <div className="panel-title">{selectedProject?.title || "当前作品"}</div>
+                <div className="panel-subtitle">共 {events.length} 个剧情事件。</div>
+              </div>
+            </div>
+            <div className="panel-body stack-list">
+              {events.map((item) => (
+                <button
+                  className={`event-row ${item.id === selectedEventId ? "active" : ""}`}
+                  key={item.id}
+                  onClick={() => setSelectedEventId(item.id)}
+                >
+                  <span>{statusText(item.status)} · 第 {item.start_chapter_index || "-"}-{item.end_chapter_index || "-"} 章</span>
+                  <strong>{item.title || "未命名事件"}</strong>
+                  <small>{item.generated_chapter_count || 0}/{item.planned_chapter_count || 0} 章 · 后续处理 {item.remaining_open_risks || 0} 条</small>
+                </button>
+              ))}
+            </div>
+          </aside>
+
+          <div className="event-detail-stack">
+            {(message || error) ? <div className={error ? "error-box" : "hint-panel"}>{error || message}</div> : null}
+            {eventDetail ? (
+              <>
+                <section className="panel event-hero-panel">
+                  <div className="panel-body event-hero">
+                    <div>
+                      <span className="tag purple">StoryPlanningAgent</span>
+                      <h2>{eventDetail.title || "未命名事件"}</h2>
+                      <p>{eventDetail.goal || "暂无事件目标。"}</p>
+                    </div>
+                    <div className="story-event-progress">
+                      <strong>{eventDetail.generated_chapter_count || 0} / {eventDetail.planned_chapter_count || 0}</strong>
+                      <span>已生成章节</span>
+                      <div className="progress">
+                        <span style={{ width: `${eventDetail.planned_chapter_count ? Math.round((eventDetail.generated_chapter_count / eventDetail.planned_chapter_count) * 100) : 4}%` }} />
+                      </div>
+                      <em>{eventDetail.graph_status || statusText(eventDetail.status)}</em>
+                    </div>
+                  </div>
+                  <div className="event-facts">
+                    <div><span>核心冲突</span><strong>{eventDetail.core_conflict || "未生成"}</strong></div>
+                    <div><span>章节范围</span><strong>第 {eventDetail.start_chapter_index || "-"}-{eventDetail.end_chapter_index || "-"} 章</strong></div>
+                    <div><span>自动修复</span><strong>{eventDetail.auto_repair_count || 0} 次</strong></div>
+                    <div><span>后续处理</span><strong>{eventDetail.remaining_open_risks || 0} 条</strong></div>
+                  </div>
+                  {eventDetail.completion_criteria?.length ? (
+                    <div className="event-criteria">
+                      {eventDetail.completion_criteria.map((item, index) => <span key={`${item}-${index}`}>{item}</span>)}
+                    </div>
+                  ) : null}
+                  {eventDetail.next_event_hook ? <div className="hint-panel">下一事件钩子：{eventDetail.next_event_hook}</div> : null}
+                </section>
+
+                <section className="panel event-quality-panel">
+                  <div className="panel-header">
+                    <div>
+                      <div className="panel-title">事件级质量审校</div>
+                      <div className="panel-subtitle">从整段剧情判断闭环、节奏、人物推进和伏笔推进。</div>
+                    </div>
+                    <span className={`tag ${scoreTone(eventDetail.quality_report?.scores?.overall || 0)}`}>
+                      总分 {eventDetail.quality_report?.scores?.overall ?? "-"}
+                    </span>
+                  </div>
+                  <div className="panel-body">
+                    {eventDetail.quality_report?.scores ? (
+                      <>
+                        <div className="quality-score-grid">
+                          {[
+                            ["闭环", "closure"],
+                            ["节奏", "pacing"],
+                            ["人物推进", "character_arc"],
+                            ["伏笔推进", "foreshadowing"],
+                            ["综合", "overall"]
+                          ].map(([label, key]) => {
+                            const value = eventDetail.quality_report.scores[key] ?? 0;
+                            return (
+                              <div className="quality-score-card" key={key}>
+                                <span>{label}</span>
+                                <strong>{value}</strong>
+                                <div className="progress"><span className={scoreTone(value)} style={{ width: `${value}%` }} /></div>
+                              </div>
+                            );
+                          })}
+                        </div>
+                        <div className="quality-summary">
+                          <strong>{eventDetail.quality_report.summary || "事件级审校已完成。"}</strong>
+                          {eventDetail.quality_report.repair_strategy ? <p>修复策略：{eventDetail.quality_report.repair_strategy}</p> : null}
+                        </div>
+                        {eventDetail.quality_report.strengths?.length ? (
+                          <div className="event-criteria">
+                            {eventDetail.quality_report.strengths.map((item, index) => <span key={`${item}-${index}`}>{item}</span>)}
+                          </div>
+                        ) : null}
+                      </>
+                    ) : (
+                      <EmptyState title="尚未执行事件级审校" description="事件生成完成后会自动审校，也可以点击右上角“重新审校事件”。" />
+                    )}
+                  </div>
+                </section>
+
+                <ReviewIssuePanel
+                  title="事件级质量建议"
+                  subtitle="系统从闭环、节奏、人物推进和伏笔推进角度记录事件质量建议。"
+                  issues={eventDetail.event_issues || []}
+                  emptyTitle="暂无事件级质量建议"
+                  emptyDescription="事件级审校完成后，系统质量建议会显示在这里。"
+                />
+
+                <section className="panel">
+                  <div className="panel-header">
+                    <div>
+                      <div className="panel-title">章节计划看板</div>
+                      <div className="panel-subtitle">每张卡片对应一个章节计划，可局部重跑或从该章继续生成。</div>
+                    </div>
+                  </div>
+                  <div className="panel-body event-board">
+                    {eventDetail.plans.map((plan) => (
+                      <article className={`event-board-card ${plan.status === "planned" ? "" : "done"}`} key={plan.id}>
+                        <div className="event-board-card-head">
+                          <span className="tag green">第 {plan.chapter_index} 章</span>
+                          <span className={`tag ${plan.open_issue_count ? "yellow" : "green"}`}>{plan.open_issue_count ? `${plan.open_issue_count} 条后续处理` : "系统正常"}</span>
+                        </div>
+                        <h3>{plan.title || "未命名章节"}</h3>
+                        <div className="event-card-meta">
+                          <span>{plan.function || "推进"}</span>
+                          <span>{statusText(plan.status)}</span>
+                        </div>
+                        <p>{plan.core_event || "暂无本章核心事件。"}</p>
+                        {plan.ending_hook ? <em>章末钩子：{plan.ending_hook}</em> : null}
+                        {plan.issues?.length ? (
+                          <div className="event-card-issues">
+                            {plan.issues.slice(0, 2).map((issue) => (
+                              <span key={issue.id}>{statusText(issue.status)} · {issue.message}</span>
+                            ))}
+                          </div>
+                        ) : null}
+                        <div className="inline-actions">
+                          <button className="secondary-button" disabled={Boolean(trackingTaskId) || busyPlanId === plan.id} onClick={() => rerunPlan(plan)}>
+                            {busyPlanId === plan.id && trackingTaskId ? "处理中" : "重跑本章"}
+                          </button>
+                          <button className="ghost-button" disabled={Boolean(trackingTaskId) || busyPlanId === plan.id} onClick={() => continueFrom(plan)}>
+                            从本章继续
+                          </button>
+                          {plan.chapter_id ? <button className="ghost-button" onClick={() => router.push(`/chapter-canvas?novel=${selectedNovelId}`)}>阅读</button> : null}
+                        </div>
+                      </article>
+                    ))}
+                  </div>
+                </section>
+
+                <ReviewIssuePanel
+                  title="后续自动处理"
+                  subtitle="这里只显示系统尚未自动闭环的内部处理项。"
+                  issues={eventDetail.open_issues || []}
+                  emptyTitle="当前事件暂无后续处理项"
+                  emptyDescription="连续性审校和事件级审校都已进入系统自动闭环。"
+                />
+              </>
+            ) : (
+              <EmptyState title="未选择剧情事件" description="请选择左侧事件查看详情。" />
+            )}
+          </div>
+        </section>
+      )}
+    </AppShell>
+  );
+}
+
+export default function StoryEventsPage() {
+  return (
+    <Suspense fallback={<main className="route-loading">正在载入剧情事件...</main>}>
+      <StoryEventsContent />
+    </Suspense>
+  );
+}

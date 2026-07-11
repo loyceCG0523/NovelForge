@@ -1,0 +1,388 @@
+"""剧情事件级质量审校服务。
+
+章节连续性审校只看单章是否违背上下文；EventQualityChecker 站在 6-12 章大事件层面，
+检查事件是否闭环、节奏是否升级、人物推进是否成立，以及结尾是否兑现事件目标。
+"""
+
+from __future__ import annotations
+
+from typing import Any
+
+from sqlalchemy import func, select
+from sqlalchemy.orm import Session
+
+from app.models.chapter import Chapter
+from app.models.event_chapter_plan import EventChapterPlan
+from app.models.novel import Novel
+from app.models.review_issue import ReviewIssue
+from app.models.story_event import StoryEvent
+from app.services.llm_client import LLMClient, LLMConfig
+
+
+EVENT_QUALITY_SOURCE = "event_quality_checker"
+EVENT_QUALITY_NOTE_STATUS = "quality_note"
+ALLOWED_EVENT_ISSUE_TYPES = {
+    "event_closure",
+    "event_pacing",
+    "event_conflict",
+    "event_character_arc",
+    "event_foreshadowing",
+    "event_repetition",
+    "event_plan_consistency",
+}
+ALLOWED_SEVERITIES = {"low", "medium", "high"}
+
+
+def _compact_chapter(chapter: Chapter | None) -> dict[str, Any]:
+    """压缩章节内容，避免事件审校 prompt 过长。"""
+    if chapter is None:
+        return {}
+    content = chapter.content or ""
+    return {
+        "id": str(chapter.id),
+        "chapter_index": chapter.chapter_index,
+        "title": chapter.title,
+        "summary": chapter.summary,
+        "word_count": chapter.word_count,
+        "content_excerpt": content[:1200],
+    }
+
+
+def _load_event_material(db: Session, story_event: StoryEvent) -> tuple[list[EventChapterPlan], list[dict[str, Any]], list[ReviewIssue]]:
+    """读取事件审校需要的章节计划、章节正文摘要和已有章节风险。"""
+    plans = db.scalars(
+        select(EventChapterPlan)
+        .where(EventChapterPlan.story_event_id == story_event.id)
+        .order_by(EventChapterPlan.chapter_index.asc())
+    ).all()
+    chapter_ids = [plan.chapter_id for plan in plans if plan.chapter_id]
+    chapters_by_id = {}
+    if chapter_ids:
+        chapters = db.scalars(select(Chapter).where(Chapter.id.in_(chapter_ids))).all()
+        chapters_by_id = {chapter.id: chapter for chapter in chapters}
+
+    chapter_material = [
+        {
+            "plan": {
+                "id": str(plan.id),
+                "chapter_index": plan.chapter_index,
+                "title": plan.title,
+                "function": plan.function,
+                "core_event": plan.core_event,
+                "ending_hook": plan.ending_hook,
+                "status": plan.status,
+            },
+            "chapter": _compact_chapter(chapters_by_id.get(plan.chapter_id)) if plan.chapter_id else {},
+        }
+        for plan in plans
+    ]
+
+    chapter_issues = []
+    if chapter_ids:
+        chapter_issues = db.scalars(
+            select(ReviewIssue)
+            .where(ReviewIssue.novel_id == story_event.novel_id, ReviewIssue.chapter_id.in_(chapter_ids))
+            .order_by(ReviewIssue.updated_at.desc())
+        ).all()
+    return plans, chapter_material, chapter_issues
+
+
+def build_event_quality_prompt(
+    novel: Novel,
+    story_event: StoryEvent,
+    chapter_material: list[dict[str, Any]],
+    chapter_issues: list[ReviewIssue],
+) -> list[dict[str, str]]:
+    """构造事件级质量审校 prompt。"""
+    payload = story_event.payload or {}
+    compact_issues = [
+        {
+            "chapter_id": str(issue.chapter_id) if issue.chapter_id else None,
+            "issue_type": issue.issue_type,
+            "severity": issue.severity,
+            "status": issue.status,
+            "message": issue.message,
+        }
+        for issue in chapter_issues[:20]
+    ]
+    event_input = {
+        "novel": {
+            "title": novel.title,
+            "genre": novel.genre,
+            "premise": novel.premise,
+            "brief": novel.brief or {},
+        },
+        "story_event": {
+            "title": story_event.title,
+            "goal": story_event.goal,
+            "core_conflict": story_event.core_conflict,
+            "next_event_hook": story_event.next_event_hook,
+            "completion_criteria": payload.get("completion_criteria", []),
+            "planned_chapter_count": story_event.planned_chapter_count,
+            "generated_chapter_count": story_event.generated_chapter_count,
+        },
+        "chapter_material": chapter_material,
+        "chapter_level_issues": compact_issues,
+    }
+    return [
+        {
+            "role": "system",
+            "content": (
+                "你是 NovelForge 的 EventQualityChecker。你不负责润色单章，"
+                "只判断一组章节作为一个完整剧情事件是否成立。只输出 JSON，不要输出 Markdown。"
+            ),
+        },
+        {
+            "role": "user",
+            "content": (
+                "请审校这个剧情事件的整体质量。\n"
+                "重点检查：事件起因是否明确，冲突是否逐章升级，是否存在重复空转，"
+                "人物关系/动机是否推进，伏笔是否被推进或回收，结尾是否兑现事件目标，"
+                "是否留下合理的下一事件钩子。\n"
+                "输出格式必须为：\n"
+                "{\n"
+                '  "scores": {"closure": 0-100, "pacing": 0-100, "character_arc": 0-100, "foreshadowing": 0-100, "overall": 0-100},\n'
+                '  "summary": "一句话总结事件质量",\n'
+                '  "strengths": ["优点"],\n'
+                '  "issues": [\n'
+                "    {\n"
+                '      "issue_type": "event_closure|event_pacing|event_conflict|event_character_arc|event_foreshadowing|event_repetition|event_plan_consistency",\n'
+                '      "severity": "low|medium|high",\n'
+                '      "message": "给用户看的简短问题说明",\n'
+                '      "evidence": "问题依据，指出章节或计划",\n'
+                '      "suggestion": "建议如何修复",\n'
+                '      "affected_chapter_indexes": [1, 2]\n'
+                "    }\n"
+                "  ],\n"
+                '  "repair_strategy": "建议优先修复方式"\n'
+                "}\n\n"
+                f"事件材料：\n{event_input}"
+            ),
+        },
+    ]
+
+
+def _score(value: Any, default: int = 75) -> int:
+    """把模型评分裁剪到 0-100。"""
+    try:
+        return max(0, min(int(value), 100))
+    except (TypeError, ValueError):
+        return default
+
+
+def normalize_event_quality_result(raw: dict[str, Any]) -> dict[str, Any]:
+    """清洗事件级审校结果，保证可安全落库。"""
+    raw_scores = raw.get("scores") if isinstance(raw.get("scores"), dict) else {}
+    scores = {
+        "closure": _score(raw_scores.get("closure")),
+        "pacing": _score(raw_scores.get("pacing")),
+        "character_arc": _score(raw_scores.get("character_arc")),
+        "foreshadowing": _score(raw_scores.get("foreshadowing")),
+        "overall": _score(raw_scores.get("overall")),
+    }
+
+    normalized_issues: list[dict[str, Any]] = []
+    raw_issues = raw.get("issues") if isinstance(raw.get("issues"), list) else []
+    for issue in raw_issues:
+        if not isinstance(issue, dict):
+            continue
+        message = str(issue.get("message") or "").strip()
+        if not message:
+            continue
+        issue_type = str(issue.get("issue_type") or "event_plan_consistency").strip()
+        if issue_type not in ALLOWED_EVENT_ISSUE_TYPES:
+            issue_type = "event_plan_consistency"
+        severity = str(issue.get("severity") or "medium").strip().lower()
+        if severity not in ALLOWED_SEVERITIES:
+            severity = "medium"
+        affected = issue.get("affected_chapter_indexes")
+        if not isinstance(affected, list):
+            affected = []
+        normalized_issues.append(
+            {
+                "issue_type": issue_type,
+                "severity": severity,
+                "message": message,
+                "evidence": str(issue.get("evidence") or ""),
+                "suggestion": str(issue.get("suggestion") or ""),
+                "affected_chapter_indexes": [int(item) for item in affected if str(item).isdigit()],
+            }
+        )
+
+    return {
+        "scores": scores,
+        "summary": str(raw.get("summary") or "事件级审校已完成。"),
+        "strengths": raw.get("strengths") if isinstance(raw.get("strengths"), list) else [],
+        "issues": normalized_issues[:12],
+        "repair_strategy": str(raw.get("repair_strategy") or ""),
+    }
+
+
+def _build_rule_based_quality_result(
+    story_event: StoryEvent,
+    plans: list[EventChapterPlan],
+    chapter_material: list[dict[str, Any]],
+    chapter_issues: list[ReviewIssue],
+) -> dict[str, Any]:
+    """无 LLM 时执行基础规则审校，保证事件页有可解释的质量状态。"""
+    issues: list[dict[str, Any]] = []
+    generated_count = len([item for item in chapter_material if item.get("chapter")])
+    if story_event.planned_chapter_count and generated_count < story_event.planned_chapter_count:
+        issues.append(
+            {
+                "issue_type": "event_closure",
+                "severity": "high",
+                "message": f"事件计划共 {story_event.planned_chapter_count} 章，目前只生成 {generated_count} 章，事件尚未闭环。",
+                "evidence": "章节计划存在未生成章节。",
+                "suggestion": "从第一个待生成章节继续生成，或重跑整个事件。",
+                "affected_chapter_indexes": [plan.chapter_index for plan in plans if not plan.chapter_id],
+            }
+        )
+
+    functions = [plan.function for plan in plans if plan.function]
+    if len(functions) >= 4 and len(set(functions)) <= 2:
+        issues.append(
+            {
+                "issue_type": "event_pacing",
+                "severity": "medium",
+                "message": "多章章节功能过于集中，可能存在节奏重复或冲突升级不足。",
+                "evidence": f"章节功能分布：{'、'.join(functions)}",
+                "suggestion": "重写事件计划，让章节承担铺垫、升级、反转、收束等不同功能。",
+                "affected_chapter_indexes": [plan.chapter_index for plan in plans],
+            }
+        )
+
+    if story_event.generated_chapter_count >= story_event.planned_chapter_count and not story_event.next_event_hook:
+        issues.append(
+            {
+                "issue_type": "event_closure",
+                "severity": "low",
+                "message": "事件已生成完成，但缺少下一事件钩子。",
+                "evidence": "StoryEvent.next_event_hook 为空。",
+                "suggestion": "在收束章补充一个自然引出的下一阶段问题。",
+                "affected_chapter_indexes": [story_event.end_chapter_index] if story_event.end_chapter_index else [],
+            }
+        )
+
+    open_chapter_issues = [issue for issue in chapter_issues if issue.status == "open"]
+    if open_chapter_issues:
+        issues.append(
+            {
+                "issue_type": "event_plan_consistency",
+                "severity": "medium",
+                "message": f"事件中仍有 {len(open_chapter_issues)} 条章节级系统处理项，可能影响整体闭环。",
+                "evidence": "章节连续性审校仍存在系统处理中事项。",
+                "suggestion": "由系统优先重跑或修订影响最大的章节，再重新执行事件级审校。",
+                "affected_chapter_indexes": [],
+            }
+        )
+
+    penalty = min(45, len(issues) * 12)
+    return {
+        "scores": {
+            "closure": 100 - (25 if generated_count < (story_event.planned_chapter_count or generated_count) else 0),
+            "pacing": 82 - (18 if any(issue["issue_type"] == "event_pacing" for issue in issues) else 0),
+            "character_arc": 76,
+            "foreshadowing": 74,
+            "overall": max(40, 82 - penalty),
+        },
+        "summary": "已完成事件级规则审校；配置 LLM 后可获得更细的剧情质量判断。",
+        "strengths": ["章节计划和正文已形成可审校的事件结构。"] if generated_count else [],
+        "issues": issues,
+        "repair_strategy": "优先生成缺失章节并处理系统审校项，再检查事件收束章。",
+    }
+
+
+def check_event_quality(
+    db: Session,
+    novel: Novel,
+    story_event: StoryEvent,
+    llm_config: LLMConfig | None,
+) -> dict[str, Any]:
+    """执行事件级质量审校，返回质量报告。"""
+    plans, chapter_material, chapter_issues = _load_event_material(db, story_event)
+    if llm_config is None:
+        return normalize_event_quality_result(
+            _build_rule_based_quality_result(story_event, plans, chapter_material, chapter_issues)
+        )
+
+    _, parsed = LLMClient(llm_config).complete_json(
+        build_event_quality_prompt(novel, story_event, chapter_material, chapter_issues)
+    )
+    return normalize_event_quality_result(parsed)
+
+
+def sync_event_quality_issues(
+    db: Session,
+    novel: Novel,
+    story_event: StoryEvent,
+    llm_config: LLMConfig | None,
+) -> dict[str, Any]:
+    """同步事件级质量记录，并把质量报告写回 StoryEvent.payload。"""
+    report = check_event_quality(db=db, novel=novel, story_event=story_event, llm_config=llm_config)
+    existing_issues = db.scalars(
+        select(ReviewIssue).where(
+            ReviewIssue.novel_id == novel.id,
+            ReviewIssue.chapter_id.is_(None),
+            ReviewIssue.issue_type.like("event_%"),
+        )
+    ).all()
+    for issue in existing_issues:
+        payload = issue.payload or {}
+        if (
+            issue.status in {"open", EVENT_QUALITY_NOTE_STATUS}
+            and payload.get("source") == EVENT_QUALITY_SOURCE
+            and payload.get("story_event_id") == str(story_event.id)
+        ):
+            db.delete(issue)
+
+    new_issues = [
+        ReviewIssue(
+            novel_id=novel.id,
+            chapter_id=None,
+            issue_type=item["issue_type"],
+            severity=item["severity"],
+            status=EVENT_QUALITY_NOTE_STATUS,
+            message=item["message"],
+            payload={
+                "source": EVENT_QUALITY_SOURCE,
+                "auto_generated": True,
+                "requires_user_action": False,
+                "story_event_id": str(story_event.id),
+                "evidence": item["evidence"],
+                "suggestion": item["suggestion"],
+                "affected_chapter_indexes": item["affected_chapter_indexes"],
+            },
+        )
+        for item in report["issues"]
+    ]
+    db.add_all(new_issues)
+
+    story_event.payload = {
+        **(story_event.payload or {}),
+        "quality_report": report,
+    }
+    db.commit()
+    for issue in new_issues:
+        db.refresh(issue)
+
+    chapter_ids = [
+        plan.chapter_id
+        for plan in db.scalars(select(EventChapterPlan).where(EventChapterPlan.story_event_id == story_event.id)).all()
+        if plan.chapter_id
+    ]
+    open_chapter_risks = 0
+    if chapter_ids:
+        open_chapter_risks = db.scalar(
+            select(func.count())
+            .select_from(ReviewIssue)
+            .where(ReviewIssue.novel_id == novel.id, ReviewIssue.chapter_id.in_(chapter_ids), ReviewIssue.status == "open")
+        ) or 0
+    story_event.remaining_open_risks = open_chapter_risks
+    db.commit()
+
+    return {
+        "quality_report": report,
+        "created_issues": len(new_issues),
+        "remaining_open_risks": story_event.remaining_open_risks,
+    }

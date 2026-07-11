@@ -29,3 +29,9 @@ class ReviewIssueRead(BaseModel):
     payload: dict
 
     model_config = ConfigDict(from_attributes=True)
+
+
+class ReviewIssueStatusUpdate(BaseModel):
+    """更新审校风险状态。"""
+
+    status: str

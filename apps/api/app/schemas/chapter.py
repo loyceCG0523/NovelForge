@@ -39,5 +39,6 @@ class ChapterRead(BaseModel):
     summary: str
     content: str
     context_snapshot: dict
+    event_plan: dict | None = None
 
     model_config = ConfigDict(from_attributes=True)

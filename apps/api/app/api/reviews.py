@@ -14,7 +14,7 @@ from app.db.session import get_db
 from app.models.chapter import Chapter
 from app.models.novel import Novel
 from app.models.review_issue import ReviewIssue
-from app.schemas.review import ReviewIssueCreate, ReviewIssueRead
+from app.schemas.review import ReviewIssueCreate, ReviewIssueRead, ReviewIssueStatusUpdate
 
 
 router = APIRouter(prefix="/api/novels/{novel_id}/reviews", tags=["reviews"])
@@ -42,6 +42,7 @@ def create_review_issue(
 @router.get("", response_model=list[ReviewIssueRead])
 def list_review_issues(
     status_filter: str | None = None,
+    chapter_id: UUID | None = None,
     novel: Novel = Depends(get_owned_novel),
     db: Session = Depends(get_db),
 ) -> list[ReviewIssue]:
@@ -49,6 +50,8 @@ def list_review_issues(
     statement = select(ReviewIssue).where(ReviewIssue.novel_id == novel.id)
     if status_filter:
         statement = statement.where(ReviewIssue.status == status_filter)
+    if chapter_id:
+        statement = statement.where(ReviewIssue.chapter_id == chapter_id)
     statement = statement.order_by(ReviewIssue.created_at.desc())
     return list(db.scalars(statement).all())
 
@@ -56,7 +59,7 @@ def list_review_issues(
 @router.patch("/{issue_id}/status", response_model=ReviewIssueRead)
 def update_review_issue_status(
     issue_id: UUID,
-    status_value: str,
+    payload: ReviewIssueStatusUpdate,
     novel: Novel = Depends(get_owned_novel),
     db: Session = Depends(get_db),
 ) -> ReviewIssue:
@@ -64,7 +67,9 @@ def update_review_issue_status(
     issue = db.get(ReviewIssue, issue_id)
     if issue is None or issue.novel_id != novel.id:
         raise HTTPException(status_code=404, detail="Review issue not found")
-    issue.status = status_value
+    if payload.status not in {"open", "resolved", "ignored"}:
+        raise HTTPException(status_code=400, detail="Invalid review issue status")
+    issue.status = payload.status
     db.commit()
     db.refresh(issue)
     return issue

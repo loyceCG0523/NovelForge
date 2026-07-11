@@ -38,10 +38,10 @@ export default function LoginPage() {
         </div>
         <div className="visual-copy">
           <h1>继续管理你的小说项目、章节生产和结构化记忆。</h1>
-          <p>登录后进入创作工作台，查看当前作品状态、风险提醒、自动生产队列和最近审校结果。</p>
+          <p>登录后进入创作工作台，查看当前作品状态、系统审校记录和自动生产进度。</p>
           <div className="visual-board">
             <div className="visual-card"><strong>灰塔长夜</strong><span>第 24 章生成中</span></div>
-            <div className="visual-card"><strong>待处理风险</strong><span>4 条需要确认</span></div>
+            <div className="visual-card"><strong>系统审校</strong><span>自动修复记录</span></div>
             <div className="visual-card"><strong>本月生成</strong><span>182,400 字</span></div>
           </div>
         </div>

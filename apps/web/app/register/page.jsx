@@ -42,7 +42,7 @@ export default function RegisterPage() {
           <div className="visual-board">
             <div className="visual-card"><strong>作品管理</strong><span>多小说项目</span></div>
             <div className="visual-card"><strong>创作工作台</strong><span>状态与风险</span></div>
-            <div className="visual-card"><strong>Agent 预留</strong><span>任务队列已接通</span></div>
+            <div className="visual-card"><strong>事件生成</strong><span>任务队列已接通</span></div>
           </div>
         </div>
         <div className="brand-row"><span>核心生成智能体会接入任务队列，不影响当前产品框架推进。</span></div>

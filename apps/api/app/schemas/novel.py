@@ -26,6 +26,13 @@ class NovelUpdate(BaseModel):
     brief: dict | None = None
 
 
+class NovelDeleteConfirm(BaseModel):
+    """删除作品时提交的防误删确认码。"""
+
+    confirmation_code: str
+    expected_code: str
+
+
 class NovelRead(BaseModel):
     """返回给前端的作品项目视图。"""
 

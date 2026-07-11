@@ -11,3 +11,6 @@ class NovelDashboardRead(BaseModel):
     latest_chapters: list[dict]
     latest_tasks: list[dict]
     open_review_issues: list[dict]
+    review_issues: list[dict] = []
+    current_story_event: dict | None = None
+    current_auto_run: dict | None = None

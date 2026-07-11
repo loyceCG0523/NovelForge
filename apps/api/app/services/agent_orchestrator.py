@@ -37,3 +37,24 @@ def enqueue_agent_task(db: Session, novel: Novel, payload: AgentRunRequest) -> G
     db.refresh(task)
     push_task_to_queue(str(task.id))
     return task
+
+
+def enqueue_standalone_agent_task(db: Session, payload: AgentRunRequest) -> GenerationTask:
+    """创建不绑定作品的 Agent 任务，用于样本库等独立模块。"""
+    task = GenerationTask(
+        novel_id=None,
+        chapter_id=payload.chapter_id,
+        task_type=payload.task_type,
+        status="queued",
+        progress=0,
+        result_payload={
+            "input": payload.input_payload,
+            "agent": "reserved",
+            "note": "Standalone agent workflow.",
+        },
+    )
+    db.add(task)
+    db.commit()
+    db.refresh(task)
+    push_task_to_queue(str(task.id))
+    return task

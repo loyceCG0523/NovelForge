@@ -1,0 +1,35 @@
+"""样本分析报告模型。"""
+
+from uuid import UUID
+
+from sqlalchemy import BigInteger, ForeignKey, Integer, String, Text
+from sqlalchemy.dialects.postgresql import JSONB, UUID as PgUUID
+from sqlalchemy.orm import Mapped, mapped_column
+
+from app.db.base import Base
+from app.models.mixins import IdMixin, TimestampMixin
+
+
+class SampleAnalysis(IdMixin, TimestampMixin, Base):
+    """优秀小说样本的结构化风格工程报告，不保存原文。"""
+
+    __tablename__ = "sample_analyses"
+
+    owner_id: Mapped[UUID] = mapped_column(PgUUID(as_uuid=True), ForeignKey("users.id"), index=True)
+    novel_id: Mapped[UUID | None] = mapped_column(PgUUID(as_uuid=True), ForeignKey("novels.id"), nullable=True, index=True)
+    task_id: Mapped[UUID | None] = mapped_column(PgUUID(as_uuid=True), ForeignKey("generation_tasks.id"), nullable=True)
+    status: Mapped[str] = mapped_column(String(40), default="active", index=True)
+    sample_title: Mapped[str] = mapped_column(String(160), default="")
+    source_author: Mapped[str] = mapped_column(String(120), default="")
+    source_genre: Mapped[str] = mapped_column(String(80), default="")
+    source_file_name: Mapped[str] = mapped_column(String(255), default="")
+    source_object_key: Mapped[str] = mapped_column(String(512), default="")
+    source_file_size: Mapped[int] = mapped_column(BigInteger, default=0)
+    source_word_count: Mapped[int] = mapped_column(Integer, default=0)
+    chapter_count: Mapped[int] = mapped_column(Integer, default=0)
+    chunk_count: Mapped[int] = mapped_column(Integer, default=0)
+    analyzed_chunk_count: Mapped[int] = mapped_column(Integer, default=0)
+    error_message: Mapped[str] = mapped_column(Text, default="")
+    summary: Mapped[str] = mapped_column(Text, default="")
+    metrics: Mapped[dict] = mapped_column(JSONB, default=dict)
+    report: Mapped[dict] = mapped_column(JSONB, default=dict)

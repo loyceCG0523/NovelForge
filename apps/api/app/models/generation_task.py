@@ -15,7 +15,7 @@ class GenerationTask(IdMixin, TimestampMixin, Base):
 
     __tablename__ = "generation_tasks"
 
-    novel_id: Mapped[UUID] = mapped_column(PgUUID(as_uuid=True), ForeignKey("novels.id"), index=True)
+    novel_id: Mapped[UUID | None] = mapped_column(PgUUID(as_uuid=True), ForeignKey("novels.id"), nullable=True, index=True)
     chapter_id: Mapped[UUID | None] = mapped_column(PgUUID(as_uuid=True), ForeignKey("chapters.id"), nullable=True)
     task_type: Mapped[str] = mapped_column(String(60), index=True)
     status: Mapped[str] = mapped_column(String(40), default="pending", index=True)
