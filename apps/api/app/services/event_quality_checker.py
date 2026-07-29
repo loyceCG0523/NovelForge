@@ -1,11 +1,14 @@
 """剧情事件级质量审校服务。
 
-章节连续性审校只看单章是否违背上下文；EventQualityChecker 站在 6-12 章大事件层面，
+章节连续性审校只看单章是否违背上下文；EventQualityChecker 站在 4-12 章事件层面，
 检查事件是否闭环、节奏是否升级、人物推进是否成立，以及结尾是否兑现事件目标。
 """
 
 from __future__ import annotations
 
+import math
+import time
+from dataclasses import replace
 from typing import Any
 
 from sqlalchemy import func, select
@@ -13,10 +16,13 @@ from sqlalchemy.orm import Session
 
 from app.models.chapter import Chapter
 from app.models.event_chapter_plan import EventChapterPlan
+from app.models.generation_task import GenerationTask
 from app.models.novel import Novel
 from app.models.review_issue import ReviewIssue
 from app.models.story_event import StoryEvent
 from app.services.llm_client import LLMClient, LLMConfig
+from app.services.pacing_plan import is_closing_event
+from app.services.task_events import emit_task_event
 
 
 EVENT_QUALITY_SOURCE = "event_quality_checker"
@@ -26,6 +32,10 @@ ALLOWED_EVENT_ISSUE_TYPES = {
     "event_pacing",
     "event_conflict",
     "event_character_arc",
+    "event_character_consistency",
+    "event_logic",
+    "event_timeline",
+    "event_resource_state",
     "event_foreshadowing",
     "event_repetition",
     "event_plan_consistency",
@@ -34,7 +44,7 @@ ALLOWED_SEVERITIES = {"low", "medium", "high"}
 
 
 def _compact_chapter(chapter: Chapter | None) -> dict[str, Any]:
-    """压缩章节内容，避免事件审校 prompt 过长。"""
+    """整理事件审校章节材料；保留完整正文才能判断跨章因果。"""
     if chapter is None:
         return {}
     content = chapter.content or ""
@@ -44,7 +54,7 @@ def _compact_chapter(chapter: Chapter | None) -> dict[str, Any]:
         "title": chapter.title,
         "summary": chapter.summary,
         "word_count": chapter.word_count,
-        "content_excerpt": content[:1200],
+        "content": content,
     }
 
 
@@ -110,12 +120,24 @@ def build_event_quality_prompt(
             "title": novel.title,
             "genre": novel.genre,
             "premise": novel.premise,
-            "brief": novel.brief or {},
+        },
+        "hard_facts": {
+            "characters": (novel.brief or {}).get("characters", []),
+            "story_era": (novel.brief or {}).get("story_era", ""),
+            "story_location": (novel.brief or {}).get("story_location", ""),
+            "worldview": (novel.brief or {}).get("worldview", ""),
+            "forbidden_content": (novel.brief or {}).get("forbidden_content", ""),
         },
         "story_event": {
             "title": story_event.title,
             "goal": story_event.goal,
             "core_conflict": story_event.core_conflict,
+            "genre_alignment": payload.get("genre_alignment", ""),
+            "dramatic_escalation": payload.get("dramatic_escalation", ""),
+            "major_reversal": payload.get("major_reversal", ""),
+            "reader_payoff": payload.get("reader_payoff", ""),
+            "narrative_contract": payload.get("narrative_contract", {}),
+            "planning_quality": payload.get("planning_quality", {}),
             "next_event_hook": story_event.next_event_hook,
             "completion_criteria": payload.get("completion_criteria", []),
             "planned_chapter_count": story_event.planned_chapter_count,
@@ -136,8 +158,14 @@ def build_event_quality_prompt(
             "role": "user",
             "content": (
                 "请审校这个剧情事件的整体质量。\n"
-                "重点检查：事件起因是否明确，冲突是否逐章升级，是否存在重复空转，"
-                "人物关系/动机是否推进，伏笔是否被推进或回收，结尾是否兑现事件目标，"
+                "重点检查：事件起因是否明确，冲突是否逐章升级，是否存在重复空转；"
+                "对照 narrative_contract 检查事件是否兑现本书主类型承诺、转折和阶段回报；"
+                "职业、技能、身份、设定名词或日常流程若不是主类型核心，只能承担能力、压力、代价或翻盘工具，"
+                "不能连续主导章节；流程完成本身不算读者回报。此规则适用于所有题材，不预设具体类型。"
+                "人物关系/动机是否推进，人物行为是否符合人物档案、职业能力、基本常识和安全意识；"
+                "检查每个物品或资源由谁持有、谁能使用、状态如何变化，不能只检查名称是否重复；"
+                "检查时间线、因果链和现实设备用途，不能把不会做饭、不善社交等局部弱点泛化为低常识或低专业能力；"
+                "伏笔是否被推进或回收，结尾是否兑现事件目标，"
                 "是否留下合理的下一事件钩子。\n"
                 "输出格式必须为：\n"
                 "{\n"
@@ -146,7 +174,7 @@ def build_event_quality_prompt(
                 '  "strengths": ["优点"],\n'
                 '  "issues": [\n'
                 "    {\n"
-                '      "issue_type": "event_closure|event_pacing|event_conflict|event_character_arc|event_foreshadowing|event_repetition|event_plan_consistency",\n'
+                '      "issue_type": "event_closure|event_pacing|event_conflict|event_character_arc|event_character_consistency|event_logic|event_timeline|event_resource_state|event_foreshadowing|event_repetition|event_plan_consistency",\n'
                 '      "severity": "low|medium|high",\n'
                 '      "message": "给用户看的简短问题说明",\n'
                 '      "evidence": "问题依据，指出章节或计划",\n'
@@ -252,7 +280,11 @@ def _build_rule_based_quality_result(
             }
         )
 
-    if story_event.generated_chapter_count >= story_event.planned_chapter_count and not story_event.next_event_hook:
+    if (
+        story_event.generated_chapter_count >= story_event.planned_chapter_count
+        and not story_event.next_event_hook
+        and not is_closing_event(story_event.payload)
+    ):
         issues.append(
             {
                 "issue_type": "event_closure",
@@ -264,7 +296,7 @@ def _build_rule_based_quality_result(
             }
         )
 
-    open_chapter_issues = [issue for issue in chapter_issues if issue.status == "open"]
+    open_chapter_issues = [issue for issue in chapter_issues if issue.status in {"open", "system_deferred"}]
     if open_chapter_issues:
         issues.append(
             {
@@ -298,6 +330,7 @@ def check_event_quality(
     novel: Novel,
     story_event: StoryEvent,
     llm_config: LLMConfig | None,
+    task: GenerationTask | None = None,
 ) -> dict[str, Any]:
     """执行事件级质量审校，返回质量报告。"""
     plans, chapter_material, chapter_issues = _load_event_material(db, story_event)
@@ -306,10 +339,107 @@ def check_event_quality(
             _build_rule_based_quality_result(story_event, plans, chapter_material, chapter_issues)
         )
 
-    _, parsed = LLMClient(llm_config).complete_json(
-        build_event_quality_prompt(novel, story_event, chapter_material, chapter_issues)
+    messages = build_event_quality_prompt(
+        novel,
+        story_event,
+        chapter_material,
+        chapter_issues,
     )
-    return normalize_event_quality_result(parsed)
+    prompt_chars = sum(len(str(message.get("content") or "")) for message in messages)
+    base_timeout_seconds = max(
+        90,
+        min(300, int(60 + prompt_chars / 200)),
+    )
+    base_total_timeout_seconds = max(
+        180,
+        min(900, base_timeout_seconds + 400),
+    )
+    timeout_seconds = math.ceil(
+        max(float(llm_config.timeout_seconds), base_timeout_seconds * 1.5)
+    )
+    total_timeout_seconds = math.ceil(
+        max(
+            float(llm_config.total_timeout_seconds or 0),
+            base_total_timeout_seconds * 1.5,
+        )
+    )
+    output_chars = 0
+    first_delta_at: float | None = None
+    started_at = time.monotonic()
+
+    def on_raw_delta(delta: str) -> None:
+        nonlocal output_chars, first_delta_at
+        if first_delta_at is None:
+            first_delta_at = time.monotonic()
+        output_chars += len(delta)
+
+    last_activity_notice_at = 0.0
+
+    def on_activity(activity: dict[str, Any]) -> None:
+        nonlocal last_activity_notice_at
+        if task is None:
+            return
+        now = time.monotonic()
+        if now - last_activity_notice_at < 10:
+            return
+        last_activity_notice_at = now
+        emit_task_event(
+            db,
+            task,
+            event_type="review",
+            step_key="event_review_stream",
+            status="running",
+            title="深度思考模型正在执行事件总审",
+            message=(
+                "连接持续活跃；"
+                f"已接收思考 {int(activity.get('reasoning_chars') or 0)} 字符、"
+                f"最终输出 {int(activity.get('output_chars') or 0)} 字符"
+            ),
+            progress=79,
+            payload={"stream_activity": activity},
+        )
+
+    client = LLMClient(
+        replace(
+            llm_config,
+            timeout_seconds=float(timeout_seconds),
+            total_timeout_seconds=float(total_timeout_seconds),
+            max_retries=(
+                0
+                if prompt_chars > 30000
+                else min(llm_config.max_retries, 1)
+            ),
+        )
+    )
+    _, parsed = client.complete_json(
+        messages,
+        max_tokens=10000,
+        stream=True,
+        on_raw_delta=on_raw_delta,
+        on_activity=on_activity,
+    )
+    report = normalize_event_quality_result(parsed)
+    report["request_telemetry"] = {
+        "streaming": True,
+        "prompt_chars": prompt_chars,
+        "activity_timeout_seconds": timeout_seconds,
+        "first_token_timeout_seconds": timeout_seconds,
+        "total_timeout_seconds": total_timeout_seconds,
+        "first_delta_seconds": (
+            round(first_delta_at - started_at, 3)
+            if first_delta_at is not None
+            else None
+        ),
+        "output_chars": output_chars,
+        "elapsed_seconds": round(time.monotonic() - started_at, 3),
+        "max_retries": (
+            0
+            if prompt_chars > 30000
+            else min(llm_config.max_retries, 1)
+        ),
+        "transport": client.last_request_telemetry,
+    }
+    return report
 
 
 def sync_event_quality_issues(
@@ -317,9 +447,16 @@ def sync_event_quality_issues(
     novel: Novel,
     story_event: StoryEvent,
     llm_config: LLMConfig | None,
+    task: GenerationTask | None = None,
 ) -> dict[str, Any]:
     """同步事件级质量记录，并把质量报告写回 StoryEvent.payload。"""
-    report = check_event_quality(db=db, novel=novel, story_event=story_event, llm_config=llm_config)
+    report = check_event_quality(
+        db=db,
+        novel=novel,
+        story_event=story_event,
+        llm_config=llm_config,
+        task=task,
+    )
     existing_issues = db.scalars(
         select(ReviewIssue).where(
             ReviewIssue.novel_id == novel.id,
@@ -342,12 +479,12 @@ def sync_event_quality_issues(
             chapter_id=None,
             issue_type=item["issue_type"],
             severity=item["severity"],
-            status=EVENT_QUALITY_NOTE_STATUS,
+            status="open" if item["severity"] == "high" else EVENT_QUALITY_NOTE_STATUS,
             message=item["message"],
             payload={
                 "source": EVENT_QUALITY_SOURCE,
                 "auto_generated": True,
-                "requires_user_action": False,
+                "requires_user_action": item["severity"] == "high",
                 "story_event_id": str(story_event.id),
                 "evidence": item["evidence"],
                 "suggestion": item["suggestion"],
@@ -376,9 +513,14 @@ def sync_event_quality_issues(
         open_chapter_risks = db.scalar(
             select(func.count())
             .select_from(ReviewIssue)
-            .where(ReviewIssue.novel_id == novel.id, ReviewIssue.chapter_id.in_(chapter_ids), ReviewIssue.status == "open")
+            .where(
+                ReviewIssue.novel_id == novel.id,
+                ReviewIssue.chapter_id.in_(chapter_ids),
+                ReviewIssue.status.in_(["open", "system_deferred"]),
+            )
         ) or 0
-    story_event.remaining_open_risks = open_chapter_risks
+    blocking_event_risks = len([issue for issue in new_issues if issue.status == "open"])
+    story_event.remaining_open_risks = open_chapter_risks + blocking_event_risks
     db.commit()
 
     return {

@@ -1,7 +1,5 @@
 """作品圣经接口。"""
 
-from uuid import UUID
-
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy import select
 from sqlalchemy.orm import Session

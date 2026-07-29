@@ -1,6 +1,6 @@
 "use client";
 
-import { Suspense, useEffect, useMemo, useState } from "react";
+import { Suspense, useEffect, useMemo, useRef, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 
 import AppShell from "@/components/AppShell";
@@ -9,7 +9,8 @@ import { apiFetch } from "@/lib/api";
 
 function splitParagraphs(content) {
   return (content || "")
-    .split(/\n{2,}|\r\n{2,}/)
+    // 兼容旧章节的单换行与新章节的空行分段，避免浏览器把换行折叠成普通空白。
+    .split(/\r?\n+/)
     .map((item) => item.trim())
     .filter(Boolean);
 }
@@ -23,6 +24,7 @@ function ChapterCanvasContent() {
   const [chapters, setChapters] = useState([]);
   const [selectedChapterId, setSelectedChapterId] = useState("");
   const [error, setError] = useState("");
+  const readerTopRef = useRef(null);
 
   const selectedProject = useMemo(
     () => projects.find((project) => project.id === selectedNovelId),
@@ -37,6 +39,18 @@ function ChapterCanvasContent() {
     [selectedChapter]
   );
   const totalWords = chapters.reduce((sum, chapter) => sum + chapter.word_count, 0);
+
+  useEffect(() => {
+    if (!selectedChapterId) return;
+
+    requestAnimationFrame(() => {
+      readerTopRef.current?.scrollIntoView({
+        block: "start",
+        inline: "nearest",
+        behavior: "auto"
+      });
+    });
+  }, [selectedChapterId]);
 
   async function loadProjects() {
     const data = await apiFetch("/api/novels");
@@ -113,7 +127,7 @@ function ChapterCanvasContent() {
               </div>
             </aside>
 
-            <article className="chapter-canvas">
+            <article className="chapter-canvas" ref={readerTopRef}>
               {selectedChapter ? (
                 <>
                   <header className="canvas-head">

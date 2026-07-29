@@ -105,7 +105,6 @@ API 创建 generation_tasks
 | `generate_story_event` | 规划并生成一个 6-12 章闭环剧情事件 |
 | `continue_story_event` | 从某个事件计划继续生成后续章节 |
 | `generate_chapter` | 单章生成或重跑 |
-| `revise_chapter` | 根据审校风险自动修订章节 |
 | `check_story_event_quality` | 事件级质量审校 |
 | `analyze_sample` | 从 MinIO 流式读取样本并分片聚合风格报告 |
 

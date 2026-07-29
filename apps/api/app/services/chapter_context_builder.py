@@ -5,6 +5,8 @@
 这里产出的 ChapterContext，避免每个 Agent 各自拼上下文导致遗漏。
 """
 
+from uuid import UUID
+
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
@@ -13,15 +15,17 @@ from app.models.foreshadowing import Foreshadowing
 from app.models.memory_item import MemoryItem
 from app.models.novel import Novel
 from app.models.review_issue import ReviewIssue
+from app.models.research_source import ResearchSource
 from app.services.agents.story_planning_agent import get_story_bible_context
 from app.services.memory_extractor import build_consolidated_memory_context
 from app.services.story_bible_builder import get_sample_style_reference_context
-
-ROLE_PREFIXES = ("男主", "女主", "主角", "男生", "女生", "同桌", "班长", "学生")
-
+from app.services.tavily_search import is_allowed_research_source
+from app.services.timeline_service import get_timeline_context
 
 def _chapter_to_context(chapter: Chapter) -> dict:
     """将章节 ORM 对象转成可序列化的上下文片段。"""
+    context_snapshot = chapter.context_snapshot or {}
+    chapter_progress = context_snapshot.get("chapter_progress") or {}
     return {
         "id": str(chapter.id),
         "chapter_index": chapter.chapter_index,
@@ -30,112 +34,9 @@ def _chapter_to_context(chapter: Chapter) -> dict:
         "summary": chapter.summary,
         "content": chapter.content,
         "word_count": chapter.word_count,
+        "chapter_progress": chapter_progress,
+        "word_guard": context_snapshot.get("word_guard") or {},
     }
-
-
-def _memory_to_context(memory: MemoryItem) -> dict:
-    """将结构化记忆转成上下文片段，供生成器查询人物、地点、道具等状态。"""
-    return {
-        "id": str(memory.id),
-        "memory_type": memory.memory_type,
-        "entity_name": memory.entity_name,
-        "chapter_index_start": memory.chapter_index_start,
-        "chapter_index_end": memory.chapter_index_end,
-        "payload": memory.payload,
-    }
-
-
-def _canonical_entity_name(entity_name: str) -> str:
-    """把“女主许清禾”这类带角色标签的实体名归一成稳定名称。"""
-    name = (entity_name or "").strip()
-    for prefix in ROLE_PREFIXES:
-        if name.startswith(prefix) and len(name) > len(prefix):
-            return name[len(prefix):].strip(" ：:，,")
-    return name
-
-
-def _memory_importance_score(memory: MemoryItem) -> int:
-    """将重要性转成排序分数，便于在合并时保留更关键的事实。"""
-    importance = str((memory.payload or {}).get("importance") or "").lower()
-    return {"high": 3, "medium": 2, "low": 1}.get(importance, 0)
-
-
-def _build_merged_memory_context(memories: list[MemoryItem]) -> list[dict]:
-    """按类型和实体名合并记忆，避免 prompt 中出现大量重复事实。
-
-    数据库仍保留逐章抽取记录，方便回溯；进入模型输入时只给实体级状态摘要和少量来源。
-    """
-    grouped: dict[tuple[str, str], list[MemoryItem]] = {}
-    for memory in memories:
-        canonical_name = _canonical_entity_name(memory.entity_name)
-        if not canonical_name:
-            continue
-        grouped.setdefault((memory.memory_type, canonical_name), []).append(memory)
-
-    merged_memories = []
-    for (memory_type, canonical_name), items in grouped.items():
-        ordered_items = sorted(
-            items,
-            key=lambda item: (item.chapter_index_end or item.chapter_index_start or 0, item.updated_at),
-            reverse=True,
-        )
-        latest = ordered_items[0]
-        summaries = []
-        statuses = []
-        source_ids = []
-        source_chapters = []
-        for item in ordered_items[:5]:
-            payload = item.payload or {}
-            summary = payload.get("summary") or payload.get("status") or payload.get("evidence")
-            if summary and summary not in summaries:
-                summaries.append(summary)
-            status = payload.get("status")
-            if status and status not in statuses:
-                statuses.append(status)
-            source_ids.append(str(item.id))
-            if item.chapter_index_start:
-                source_chapters.append(item.chapter_index_start)
-
-        chapter_indices = [
-            index
-            for item in ordered_items
-            for index in (item.chapter_index_start, item.chapter_index_end)
-            if index is not None
-        ]
-        importance = max((_memory_importance_score(item) for item in ordered_items), default=0)
-        importance_label = {3: "high", 2: "medium", 1: "low"}.get(importance, "")
-
-        merged_memories.append(
-            {
-                "memory_type": memory_type,
-                "entity_name": canonical_name,
-                "chapter_index_start": min(chapter_indices) if chapter_indices else None,
-                "chapter_index_end": max(chapter_indices) if chapter_indices else None,
-                "source_memory_count": len(ordered_items),
-                "source_memory_ids": source_ids,
-                "payload": {
-                    "summary": summaries[0] if summaries else "",
-                    "recent_facts": summaries[:5],
-                    "current_status": statuses[0] if statuses else "",
-                    "importance": importance_label,
-                    "source_chapters": sorted(set(source_chapters)),
-                },
-            }
-        )
-
-    return sorted(
-        merged_memories,
-        key=lambda item: (
-            _importance_sort_value(item["payload"].get("importance")),
-            item["chapter_index_end"] or 0,
-        ),
-        reverse=True,
-    )[:30]
-
-
-def _importance_sort_value(importance: str | None) -> int:
-    """供合并后的记忆排序使用。"""
-    return {"high": 3, "medium": 2, "low": 1}.get(str(importance or "").lower(), 0)
 
 
 def _foreshadowing_to_context(item: Foreshadowing) -> dict:
@@ -180,6 +81,7 @@ def build_chapter_context(
     brief = novel.brief or {}
     chapter_word_range = _build_chapter_word_range(brief)
     story_bible = get_story_bible_context(db, novel)
+    timeline_entries = get_timeline_context(db, novel, limit=30)
 
     # 最近三章按倒序取出再反转，既方便数据库查询，也能在上下文里保持阅读顺序。
     recent_chapters = db.scalars(
@@ -226,6 +128,34 @@ def build_chapter_context(
 
     # 样本分析只提供可迁移工程特征，不提供原文内容；优先读取作品管理中显式选择的参考样本。
     sample_style_references = get_sample_style_reference_context(db, novel)
+    has_event_research_scope = bool(task_input and "research_source_ids" in task_input)
+    requested_research_ids = (task_input or {}).get("research_source_ids") or []
+    valid_research_ids = []
+    for value in requested_research_ids:
+        try:
+            valid_research_ids.append(UUID(str(value)))
+        except (TypeError, ValueError):
+            continue
+    if has_event_research_scope and not valid_research_ids:
+        research_sources = []
+    else:
+        research_statement = select(ResearchSource).where(ResearchSource.novel_id == novel.id)
+        if valid_research_ids:
+            research_statement = research_statement.where(ResearchSource.id.in_(valid_research_ids))
+        research_candidates = db.scalars(
+            research_statement.order_by(ResearchSource.created_at.desc()).limit(24)
+        ).all()
+        research_sources = [
+            item
+            for item in research_candidates
+            if is_allowed_research_source(
+                item.title,
+                item.snippet,
+                item.published_at,
+                item.score,
+                item.domain,
+            )
+        ][:8]
 
     recent_chapters_ordered = list(reversed(recent_chapters))
 
@@ -249,27 +179,35 @@ def build_chapter_context(
         },
         "recent_chapters": [_chapter_to_context(chapter) for chapter in recent_chapters_ordered],
         "memories": merged_memories,
+        "timeline_entries": timeline_entries,
         "foreshadowing": [_foreshadowing_to_context(item) for item in active_foreshadowing],
         "review_issues": [_review_issue_to_context(issue) for issue in active_review_issues],
         "sample_style_references": sample_style_references,
+        "research_sources": [
+            {
+                "query": item.query,
+                "title": item.title,
+                "url": item.url,
+                "domain": item.domain,
+                "snippet": item.snippet,
+                "published_at": item.published_at,
+            }
+            for item in research_sources
+        ],
         "constraints": {
             "style_reference": brief.get("style_reference", ""),
             "forbidden_content": brief.get("forbidden_content", ""),
             "automation_strategy": brief.get("automation_strategy", ""),
+            "story_era": brief.get("story_era", ""),
+            "story_location": brief.get("story_location", ""),
+            "characters": brief.get("characters", []),
+            "planned_events": brief.get("planned_events", []),
             "chapter_word_range": chapter_word_range,
-            "story_bible": story_bible.get("content", {}),
-            "sample_style_vectors": [item.get("transferable_style_vector", {}) for item in sample_style_references],
         },
         "generation_guidance": {
-            "chapter_goal": _build_chapter_goal(novel, target_chapter_index, brief),
+            "chapter_goal": _build_chapter_goal(novel, target_chapter_index, brief, task_input or {}),
             "chapter_word_range": chapter_word_range,
             "continuity_reminders": _build_continuity_reminders(recent_chapters_ordered),
-            "anti_ai_reminders": [
-                "避免模板化转折句。",
-                "避免解释性独白。",
-                "避免用抽象情绪词替代具体行动和细节。",
-                "优先保持角色动机、物品状态、地点关系的连续性。",
-            ],
         },
         "stats": {
             "recent_chapter_count": len(recent_chapters_ordered),
@@ -278,14 +216,16 @@ def build_chapter_context(
             "foreshadowing_count": len(active_foreshadowing),
             "open_review_issue_count": len(active_review_issues),
             "sample_analysis_count": len(sample_style_references),
+            "research_source_count": len(research_sources),
+            "timeline_entry_count": len(timeline_entries),
         },
     }
 
 
 def _build_chapter_word_range(brief: dict) -> dict:
     """从起始需求中读取单章字数范围，并做基础纠偏。"""
-    min_words = _safe_int(brief.get("chapter_word_min"), 2000)
-    max_words = _safe_int(brief.get("chapter_word_max"), 3000)
+    min_words = _safe_int(brief.get("chapter_word_min"), 2500)
+    max_words = _safe_int(brief.get("chapter_word_max"), 2800)
     min_words = max(500, min_words)
     max_words = max(500, max_words)
     if min_words > max_words:
@@ -305,8 +245,12 @@ def _safe_int(value: object, default: int) -> int:
         return default
 
 
-def _build_chapter_goal(novel: Novel, target_chapter_index: int, brief: dict) -> str:
+def _build_chapter_goal(novel: Novel, target_chapter_index: int, brief: dict, task_input: dict | None = None) -> str:
     """从起始需求中提炼本章生成目标，作为 prompt 的主任务描述。"""
+    chapter_plan = (task_input or {}).get("chapter_plan") or {}
+    core_event = str(chapter_plan.get("core_event") or "").strip()
+    if core_event:
+        return f"生成第 {target_chapter_index} 章草稿，从上一章真实结束状态继续，核心推进：{core_event}"
     plot_direction = brief.get("plot_direction") or novel.premise or "推进主线剧情，并保持人物动机连续。"
     return f"生成第 {target_chapter_index} 章草稿，围绕“{plot_direction}”推进剧情。"
 
@@ -319,6 +263,9 @@ def _build_continuity_reminders(recent_chapters: list[Chapter]) -> list[str]:
     reminders = []
     for chapter in recent_chapters:
         title = chapter.title or f"第 {chapter.chapter_index} 章"
-        summary = chapter.summary or "该章暂无摘要，需要从正文中保持连续性。"
-        reminders.append(f"承接第 {chapter.chapter_index} 章《{title}》：{summary}")
+        progress = (chapter.context_snapshot or {}).get("chapter_progress") or {}
+        summary = progress.get("actual_summary") or chapter.summary or "该章暂无摘要，需要从正文中保持连续性。"
+        ending_state = progress.get("ending_state") or {}
+        ending_note = f"；真实结尾状态：{ending_state}" if ending_state else ""
+        reminders.append(f"承接第 {chapter.chapter_index} 章《{title}》：{summary}{ending_note}")
     return reminders

@@ -1,0 +1,123 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="color-scheme" content="light" />
+    <title>NovelForge 本地控制台</title>
+    <link rel="stylesheet" href="/styles.css?v=4" />
+  </head>
+  <body>
+    <main class="shell">
+      <header class="hero">
+        <div>
+          <p class="eyebrow">NOVELFORGE · LOCAL CONTROL DECK</p>
+          <h1>项目运行控制台</h1>
+          <p class="hero-copy">一处启动前后端与双 Worker，查看队列、健康状态和实时日志。</p>
+        </div>
+        <div class="hero-status">
+          <span id="overallDot" class="status-dot stopped"></span>
+          <div>
+            <small>系统状态</small>
+            <strong id="overallLabel">正在连接控制台</strong>
+          </div>
+        </div>
+      </header>
+
+      <section class="command-bar" aria-label="全局控制">
+        <div class="command-copy">
+          <span id="clock">--:--:--</span>
+          <p id="lastUpdate">等待第一次状态刷新</p>
+        </div>
+        <div class="command-actions">
+          <button id="startAll" class="button primary">启动全部</button>
+          <button id="restartAll" class="button secondary">重启全部</button>
+          <button id="stopAll" class="button danger">停止全部</button>
+          <a class="button ghost" href="http://127.0.0.1:3000" target="_blank" rel="noreferrer">打开 NovelForge</a>
+        </div>
+      </section>
+
+      <section id="operationPanel" class="operation-panel hidden" aria-live="polite">
+        <div class="operation-summary">
+          <div>
+            <span id="operationBadge" class="operation-badge">执行中</span>
+            <strong id="operationTitle">正在准备操作</strong>
+            <p id="operationMeta">步骤 0/0</p>
+          </div>
+          <strong id="operationPercent" class="operation-percent">0%</strong>
+        </div>
+        <div
+          class="progress-track"
+          role="progressbar"
+          aria-label="整组操作进度"
+          aria-valuemin="0"
+          aria-valuemax="100"
+          aria-valuenow="0"
+        >
+          <span id="operationProgress"></span>
+        </div>
+        <div id="operationSteps" class="operation-steps"></div>
+        <p id="operationError" class="operation-error"></p>
+      </section>
+
+      <section class="queue-strip" aria-label="队列状态">
+        <article>
+          <span>Redis</span>
+          <strong id="redisStatus">检查中</strong>
+        </article>
+        <article>
+          <span>正文任务队列</span>
+          <strong id="agentQueue">—</strong>
+        </article>
+        <article>
+          <span>记忆任务队列</span>
+          <strong id="memoryQueue">—</strong>
+        </article>
+        <article>
+          <span>日志刷新</span>
+          <strong>2 秒</strong>
+        </article>
+      </section>
+
+      <section>
+        <div class="section-heading">
+          <div>
+            <p class="eyebrow">RUNTIME SERVICES</p>
+            <h2>服务矩阵</h2>
+          </div>
+          <p>绿色表示由控制台管理且健康；灰色表示已停止。</p>
+        </div>
+        <div id="serviceGrid" class="service-grid" aria-live="polite"></div>
+      </section>
+
+      <section class="log-panel">
+        <div class="log-header">
+          <div>
+            <p class="eyebrow">LIVE OUTPUT</p>
+            <h2>实时日志</h2>
+          </div>
+          <div class="log-tools">
+            <label class="toggle">
+              <input id="autoScroll" type="checkbox" checked />
+              <span>自动滚动</span>
+            </label>
+            <button id="clearLog" class="button ghost compact">清空当前日志</button>
+          </div>
+        </div>
+        <div id="logTabs" class="log-tabs" role="tablist"></div>
+        <div id="logStatus" class="log-status stopped">
+          <i></i>
+          <strong>正在读取服务状态</strong>
+          <span>日志会保留历史内容</span>
+        </div>
+        <pre id="logOutput" class="log-output" tabindex="0">选择服务后显示日志。</pre>
+      </section>
+
+      <footer>
+        <span>只监听本机 127.0.0.1</span>
+        <span id="toast" role="status"></span>
+      </footer>
+    </main>
+    <script src="/app.js?v=4" defer></script>
+  </body>
+</html>

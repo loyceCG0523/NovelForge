@@ -1,6 +1,6 @@
 """剧情事件表模型。
 
-StoryEvent 表示一段 6-12 章左右的闭环大事件，是事件级生成 Graph 的正式业务实体。
+StoryEvent 表示一段 4-12 章左右、具有阶段结果的连续剧情单元，是事件级生成 Graph 的正式业务实体。
 """
 
 from uuid import UUID

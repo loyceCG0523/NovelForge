@@ -15,7 +15,7 @@ from typing import Any
 from app.services.llm_client import LLMClient, LLMConfig
 
 AGENT_NAME = "SampleAnalysisAgent"
-SAMPLE_ANALYSIS_SCHEMA_VERSION = "sample_analysis.v3"
+SAMPLE_ANALYSIS_SCHEMA_VERSION = "sample_analysis.v4"
 CHUNK_TARGET_CHARS = 8000
 
 SENSORY_LEXICON = {
@@ -39,13 +39,6 @@ MISDIRECTION_MARKERS = ["以为", "却", "没想到", "反而", "然而", "偏�
 CONFLICT_MARKERS = ["冲突", "争", "吵", "质问", "拒绝", "逼", "输", "赢", "危险", "威胁", "误会"]
 INFO_RELEASE_MARKERS = ["发现", "知道", "明白", "原来", "消息", "通知", "名单", "秘密", "线索"]
 EXPLANATORY_DIALOGUE_MARKERS = ["因为", "所以", "其实", "也就是说", "换句话", "你知道", "原因"]
-
-
-def analyze_sample_text(sample_title: str, source_genre: str, content: str) -> dict[str, Any]:
-    """兼容小文本同步分析入口。"""
-    text = _normalize_text(content)
-    chunks = _split_text_for_analysis(text)
-    return analyze_sample_chunks(sample_title=sample_title, source_genre=source_genre, chunks=chunks)
 
 
 def analyze_sample_chunks(
@@ -75,23 +68,37 @@ def analyze_sample_chunks(
         raise ValueError("样本文本为空或无法解码")
 
     report = _aggregate_chunk_reports(sample_title, source_genre, chunk_reports)
-    report["llm_style_strategy"] = _build_llm_style_strategy(report, llm_config)
-    return report
+    strategy = _build_llm_style_strategy(report, llm_config)
+    return _compact_sample_report(report, strategy)
 
 
 def summarize_sample_report(report: dict[str, Any]) -> str:
     """生成一行产品界面可读摘要。"""
-    style = report.get("style_fingerprint", {})
-    dialogue = report.get("dialogue_style", {})
-    pacing = report.get("pacing_model", {})
-    strategy = report.get("llm_style_strategy") or {}
-    strategy_note = "已生成 LLM 风格策略。" if strategy.get("available") else "未配置 LLM 策略。"
-    return (
-        f"句长均值 {style.get('sentence_length', {}).get('avg', 0)} 字，"
-        f"对白占比 {dialogue.get('dialogue_ratio', 0)}，"
-        f"章尾钩子强度 {pacing.get('ending_hook_strength_avg', 0)}，"
-        f"伏笔密度 {report.get('foreshadowing_pattern', {}).get('planting_density_per_1k_chars', 0)}/千字。{strategy_note}"
-    )
+    profile = report.get("reference_profile") or {}
+    if profile.get("available") and profile.get("summary"):
+        return str(profile["summary"])[:180]
+    return "样本已完成切片，生成时将通过双通道 RAG 按需检索情节窗口和语言片段。"
+
+
+def _compact_sample_report(
+    report: dict[str, Any],
+    strategy: dict[str, Any],
+) -> dict[str, Any]:
+    """最终报告只保留生成链真正会消费的短策略；详细统计不再落库或进入上下文。"""
+    sample = report.get("sample") or {}
+    return {
+        "schema_version": SAMPLE_ANALYSIS_SCHEMA_VERSION,
+        "agent": AGENT_NAME,
+        "analysis_mode": "rag_first_compact",
+        "sample": {
+            "title": sample.get("title", ""),
+            "genre": sample.get("genre", ""),
+            "word_count": sample.get("word_count", 0),
+            "chapter_count": sample.get("chapter_count", 0),
+            "chunk_count": sample.get("chunk_count", 0),
+        },
+        "reference_profile": strategy,
+    }
 
 
 def _analyze_segment(sample_title: str, source_genre: str, text: str, chunk_index: int) -> dict[str, Any]:
@@ -155,18 +162,15 @@ def _aggregate_chunk_reports(sample_title: str, source_genre: str, reports: list
 
 
 def _build_llm_style_strategy(report: dict[str, Any], llm_config: LLMConfig | None) -> dict[str, Any]:
-    """基于量化报告生成高阶风格策略；不向模型发送样本原文。"""
+    """把少量诊断指标压成短规则；真正的情节和语言参考由 RAG 提供。"""
     if llm_config is None:
         return {
             "available": False,
             "reason": "未配置 LLM API Key，仅保存量化分析结果。",
             "model": "",
-            "style_summary": "",
-            "generation_guidelines": [],
-            "anti_ai_guidelines": [],
-            "dialogue_guidelines": [],
-            "pacing_guidelines": [],
-            "risk_notes": [],
+            "summary": "",
+            "language_rules": [],
+            "anti_ai_rules": [],
         }
 
     payload = _build_llm_strategy_payload(report)
@@ -181,12 +185,12 @@ def _build_llm_style_strategy(report: dict[str, Any], llm_config: LLMConfig | No
         {
             "role": "user",
             "content": (
-                "请把以下样本工程指标转成后续小说生成可用的风格策略。"
-                "要求：1）必须保留量化约束；2）避免宽泛空话；3）重点给出降低 AI 味的句式、节奏、对白策略；"
-                "4）不要包含任何样本文本内容。\n\n"
+                "请把以下少量诊断指标压缩成可直接执行的语言参考规则。"
+                "重点是人物话术的生活感、潜台词、伴随动作和具体叙述；不要输出剧情、节奏、伏笔、句长目标，"
+                "不要包含任何样本文本内容。\n\n"
                 f"{json.dumps(payload, ensure_ascii=False)}\n\n"
-                "JSON 字段：style_summary, generation_guidelines, anti_ai_guidelines, dialogue_guidelines, "
-                "pacing_guidelines, risk_notes。每个 guidelines/risk_notes 字段为字符串数组。"
+                "JSON 字段：summary、language_rules、anti_ai_rules。"
+                "language_rules 最多 4 条，anti_ai_rules 最多 3 条；每条必须具体、短小、可执行。"
             ),
         },
     ]
@@ -197,43 +201,42 @@ def _build_llm_style_strategy(report: dict[str, Any], llm_config: LLMConfig | No
             "available": False,
             "reason": f"LLM 风格策略生成失败：{exc}",
             "model": llm_config.model,
-            "style_summary": "",
-            "generation_guidelines": [],
-            "anti_ai_guidelines": [],
-            "dialogue_guidelines": [],
-            "pacing_guidelines": [],
-            "risk_notes": [],
+            "summary": "",
+            "language_rules": [],
+            "anti_ai_rules": [],
         }
 
     return {
         "available": True,
         "reason": "",
         "model": llm_config.model,
-        "style_summary": str(parsed.get("style_summary") or "").strip(),
-        "generation_guidelines": _normalize_string_list(parsed.get("generation_guidelines")),
-        "anti_ai_guidelines": _normalize_string_list(parsed.get("anti_ai_guidelines")),
-        "dialogue_guidelines": _normalize_string_list(parsed.get("dialogue_guidelines")),
-        "pacing_guidelines": _normalize_string_list(parsed.get("pacing_guidelines")),
-        "risk_notes": _normalize_string_list(parsed.get("risk_notes")),
+        "summary": str(parsed.get("summary") or "").strip()[:180],
+        "language_rules": _normalize_string_list(parsed.get("language_rules"), limit=4),
+        "anti_ai_rules": _normalize_string_list(parsed.get("anti_ai_rules"), limit=3),
     }
 
 
 def _build_llm_strategy_payload(report: dict[str, Any]) -> dict[str, Any]:
-    """压缩给 LLM 的输入，只保留可迁移指标和少量分片概览。"""
+    """只发送解释语言表现所需的少量诊断值，避免整份统计报告占上下文。"""
+    style = report.get("style_fingerprint") or {}
+    dialogue = report.get("dialogue_style") or {}
     return {
-        "schema_version": report.get("schema_version"),
-        "sample": report.get("sample"),
-        "transferable_style_vector": report.get("transferable_style_vector"),
-        "style_fingerprint": report.get("style_fingerprint"),
-        "emotion_curve_summary": {
-            key: value
-            for key, value in (report.get("emotion_curve") or {}).items()
-            if key != "chapter_points"
+        "sample": {
+            "genre": (report.get("sample") or {}).get("genre", ""),
         },
-        "foreshadowing_pattern": report.get("foreshadowing_pattern"),
-        "dialogue_style": report.get("dialogue_style"),
-        "pacing_model": report.get("pacing_model"),
-        "representative_chunk_summaries": (report.get("chunk_summaries") or [])[:24],
+        "language_diagnostics": {
+            "dialogue_ratio": dialogue.get("dialogue_ratio", 0),
+            "utterance_length_avg": (dialogue.get("utterance_length") or {}).get("avg", 0),
+            "subtext_ratio": dialogue.get("subtext_ratio", 0),
+            "interruption_frequency_per_100_dialogues": dialogue.get(
+                "interruption_frequency_per_100_dialogues", 0
+            ),
+            "explanatory_dialogue_ratio": dialogue.get("explanatory_dialogue_ratio", 0),
+            "metaphor_density_per_1k_chars": style.get("metaphor_density_per_1k_chars", 0),
+            "dominant_sensory_dimension": (
+                style.get("sensory_coverage") or {}
+            ).get("dominant_dimension", ""),
+        },
     }
 
 
@@ -249,7 +252,7 @@ def _normalize_string_list(value: Any, limit: int = 8) -> list[str]:
     for item in items:
         text = str(item).strip()
         if text:
-            cleaned.append(text[:260])
+            cleaned.append(text[:200])
     return cleaned[:limit]
 
 
@@ -379,8 +382,11 @@ def _build_style_fingerprint(text: str, sentences: list[str], paragraphs: list[s
         "dialogue_ratio": _ratio(dialogue_chars, len(text)),
         "paragraph_rhythm": {
             "avg_paragraph_chars": round(mean(paragraph_lengths), 2) if paragraph_lengths else 0,
+            "p50_paragraph_chars": _percentile(paragraph_lengths, 0.5),
             "p90_paragraph_chars": _percentile(paragraph_lengths, 0.9),
-            "short_paragraph_ratio": _ratio(len([item for item in paragraph_lengths if item <= 80]), len(paragraph_lengths)),
+            "preferred_paragraph_ratio": _ratio(len([item for item in paragraph_lengths if item <= 50]), len(paragraph_lengths)),
+            "over_preferred_paragraph_ratio": _ratio(len([item for item in paragraph_lengths if item > 50]), len(paragraph_lengths)),
+            "over_hard_limit_paragraph_ratio": _ratio(len([item for item in paragraph_lengths if item > 70]), len(paragraph_lengths)),
         },
     }
 
@@ -546,8 +552,11 @@ def _merge_style_fingerprint(reports: list[dict[str, Any]]) -> dict[str, Any]:
         "dialogue_ratio": round(_weighted_avg([(item["style_fingerprint"]["dialogue_ratio"], item["sample"]["word_count"]) for item in reports]), 4),
         "paragraph_rhythm": {
             "avg_paragraph_chars": _weighted_avg([(item["style_fingerprint"]["paragraph_rhythm"]["avg_paragraph_chars"], item["sample"]["paragraph_count"]) for item in reports]),
+            "p50_paragraph_chars": round(_weighted_avg([(item["style_fingerprint"]["paragraph_rhythm"].get("p50_paragraph_chars", 0), item["sample"]["paragraph_count"]) for item in reports])),
             "p90_paragraph_chars": round(_weighted_avg([(item["style_fingerprint"]["paragraph_rhythm"]["p90_paragraph_chars"], item["sample"]["paragraph_count"]) for item in reports])),
-            "short_paragraph_ratio": round(_weighted_avg([(item["style_fingerprint"]["paragraph_rhythm"]["short_paragraph_ratio"], item["sample"]["paragraph_count"]) for item in reports]), 4),
+            "preferred_paragraph_ratio": round(_weighted_avg([(item["style_fingerprint"]["paragraph_rhythm"].get("preferred_paragraph_ratio", 0), item["sample"]["paragraph_count"]) for item in reports]), 4),
+            "over_preferred_paragraph_ratio": round(_weighted_avg([(item["style_fingerprint"]["paragraph_rhythm"].get("over_preferred_paragraph_ratio", 0), item["sample"]["paragraph_count"]) for item in reports]), 4),
+            "over_hard_limit_paragraph_ratio": round(_weighted_avg([(item["style_fingerprint"]["paragraph_rhythm"].get("over_hard_limit_paragraph_ratio", 0), item["sample"]["paragraph_count"]) for item in reports]), 4),
         },
     }
 
@@ -667,6 +676,10 @@ def _build_transferable_style_vector(report: dict[str, Any]) -> dict[str, Any]:
     pacing = report["pacing_model"]
     return {
         "target_sentence_avg": style["sentence_length"]["avg"],
+        "target_paragraph_avg": style["paragraph_rhythm"]["avg_paragraph_chars"],
+        "paragraph_p90": style["paragraph_rhythm"]["p90_paragraph_chars"],
+        "over_preferred_paragraph_ratio": style["paragraph_rhythm"].get("over_preferred_paragraph_ratio", 0),
+        "over_hard_limit_paragraph_ratio": style["paragraph_rhythm"].get("over_hard_limit_paragraph_ratio", 0),
         "short_sentence_ratio": style["sentence_length"]["distribution"]["short_1_12"],
         "dialogue_ratio": dialogue["dialogue_ratio"],
         "subtext_ratio": dialogue["subtext_ratio"],

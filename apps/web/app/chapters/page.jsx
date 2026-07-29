@@ -6,7 +6,7 @@ import { useRouter, useSearchParams } from "next/navigation";
 import AppShell from "@/components/AppShell";
 import EmptyState from "@/components/EmptyState";
 import ReviewIssuePanel from "@/components/ReviewIssuePanel";
-import { apiDownload, apiFetch } from "@/lib/api";
+import { apiDownload, apiFetch, buildTimestampedDownloadFilename } from "@/lib/api";
 
 const emptyChapter = {
   // 手动新建章节时使用的默认草稿，Worker 生成章节也会落到同一张表。
@@ -162,7 +162,10 @@ function ChaptersContent() {
     try {
       await apiDownload(
         `/api/novels/${selectedNovelId}/export?format=${format}`,
-        `${selectedProject?.title || "novel"}.${format === "txt" ? "txt" : "md"}`
+        buildTimestampedDownloadFilename(
+          selectedProject?.title || "novel",
+          format === "txt" ? "txt" : "md"
+        )
       );
     } catch (err) {
       setError(err.message);

@@ -133,7 +133,10 @@ def get_novel_dashboard(
         "active_tasks": db.scalar(
             select(func.count())
             .select_from(GenerationTask)
-            .where(GenerationTask.novel_id == novel.id, GenerationTask.status.in_(["queued", "running"]))
+            .where(
+                GenerationTask.novel_id == novel.id,
+                GenerationTask.status.in_(["queued", "running", "waiting"]),
+            )
         ),
     }
 
@@ -153,7 +156,7 @@ def get_novel_dashboard(
         select(StoryEvent)
         .where(
             StoryEvent.novel_id == novel.id,
-            StoryEvent.status.in_(["planned", "generating"]),
+            StoryEvent.status.in_(["planned", "generating", "reviewing", "paused"]),
         )
         .order_by(StoryEvent.updated_at.desc())
         .limit(1)
@@ -206,6 +209,7 @@ def get_novel_dashboard(
                 "status": task.status,
                 "progress": task.progress,
                 "graph_status": (task.result_payload or {}).get("graph_status", ""),
+                "error_message": task.error_message or "",
             }
             for task in latest_tasks
         ],

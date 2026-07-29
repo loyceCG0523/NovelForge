@@ -15,6 +15,9 @@ const issueTypeLabels = {
   event_repetition: "重复空转",
   event_plan_consistency: "事件计划一致性",
   anti_ai_style: "AI 风格",
+  punctuation_fragmentation: "标点节奏 / AI 风格",
+  resource_state_conflict: "道具 / 资源状态",
+  paragraph_overlength: "段落长度 / 阅读节奏",
 };
 
 const statusLabels = {

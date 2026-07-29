@@ -4,7 +4,7 @@ import { useEffect, useRef, useState } from "react";
 
 import AppShell from "@/components/AppShell";
 import EmptyState from "@/components/EmptyState";
-import { apiFetch } from "@/lib/api";
+import { apiDownload, apiFetch } from "@/lib/api";
 
 const defaultForm = {
   sample_title: "",
@@ -20,48 +20,11 @@ const statusLabels = {
   failed: "失败"
 };
 
-const vectorLabels = {
-  target_sentence_avg: "目标句长均值",
-  short_sentence_ratio: "短句占比",
-  dialogue_ratio: "对白占比",
-  subtext_ratio: "潜台词比例",
-  metaphor_density_per_1k_chars: "比喻密度/千字",
-  sensory_covered_dimension_count: "感官覆盖维度",
-  emotion_volatility: "情绪波动",
-  foreshadowing_density_per_1k_chars: "伏笔密度/千字",
-  payoff_cycle_chapters: "兑现周期/章",
-  conflict_interval_chars: "冲突间隔/字",
-  info_release_density_per_1k_chars: "信息释放密度/千字",
-  ending_hook_strength: "章尾钩子强度"
-};
-
-const hookLabels = {
-  action: "动作钩子",
-  emotion: "情绪钩子",
-  question: "悬念提问",
-  reveal: "信息揭示",
-  soft_pause: "自然停顿"
-};
-
-const emotionLabels = {
-  positive: "正向",
-  negative: "低谷",
-  tension: "紧张",
-  romance: "暧昧",
-  neutral: "平稳"
-};
-
 function formatNumber(value, suffix = "") {
   if (value === null || value === undefined || value === "") return "-";
   const number = Number(value);
   if (Number.isNaN(number)) return String(value);
   return `${Number.isInteger(number) ? number.toLocaleString() : number.toLocaleString(undefined, { maximumFractionDigits: 2 })}${suffix}`;
-}
-
-function formatRatio(value) {
-  const number = Number(value);
-  if (Number.isNaN(number)) return "-";
-  return `${Math.round(number * 100)}%`;
 }
 
 function formatBytes(value) {
@@ -70,15 +33,6 @@ function formatBytes(value) {
   if (number >= 1024 * 1024) return `${(number / 1024 / 1024).toFixed(2)} MB`;
   if (number >= 1024) return `${(number / 1024).toFixed(1)} KB`;
   return `${number} B`;
-}
-
-function metricValue(key, value) {
-  if (["short_sentence_ratio", "dialogue_ratio", "subtext_ratio", "ending_hook_strength"].includes(key)) {
-    return formatRatio(value);
-  }
-  if (key === "target_sentence_avg" || key === "conflict_interval_chars") return formatNumber(value, " 字");
-  if (key === "payoff_cycle_chapters") return formatNumber(value, " 章");
-  return formatNumber(value);
 }
 
 function filenameToTitle(filename) {
@@ -94,6 +48,16 @@ function statusTone(status) {
 function progressPercent(analysis) {
   if (!analysis.chunk_count) return analysis.status === "running" ? 18 : 0;
   return Math.min(96, Math.max(12, Math.round((analysis.analyzed_chunk_count / analysis.chunk_count) * 100)));
+}
+
+function splitGenreTags(value) {
+  const text = String(value || "").trim();
+  if (!text) return ["未标注题材"];
+  const bracketed = [...text.matchAll(/(?:【|\[)\s*([^】\]]+)\s*(?:】|\])/g)]
+    .map((match) => match[1].trim())
+    .filter(Boolean);
+  if (bracketed.length > 1) return bracketed.slice(0, 10);
+  return text.split(/[、,，/|]+/).map((item) => item.trim()).filter(Boolean).slice(0, 10);
 }
 
 function MetricTile({ label, value }) {
@@ -119,16 +83,9 @@ function GuidelineList({ title, items }) {
 
 function SampleReportDetail({ analysis }) {
   const report = analysis.report || {};
-  const style = report.style_fingerprint || {};
-  const sentence = style.sentence_length || {};
-  const sensory = style.sensory_coverage || {};
-  const rhythm = style.paragraph_rhythm || {};
-  const emotion = report.emotion_curve || {};
-  const foreshadowing = report.foreshadowing_pattern || {};
-  const dialogue = report.dialogue_style || {};
-  const pacing = report.pacing_model || {};
-  const vector = analysis.metrics || {};
-  const strategy = report.llm_style_strategy || {};
+  const profile = report.reference_profile || {};
+  const experience = report.experience_summary || {};
+  const ragIndex = report.rag_index || {};
 
   if (!["completed", "active"].includes(analysis.status)) {
     return (
@@ -142,91 +99,36 @@ function SampleReportDetail({ analysis }) {
   return (
     <div className="sample-detail">
       <div className="sample-metric-grid">
-        {Object.entries(vectorLabels).map(([key, label]) => (
-          <MetricTile key={key} label={label} value={metricValue(key, vector[key])} />
-        ))}
+        <MetricTile label="表达经验" value={formatNumber(experience.expression_experience_count ?? ragIndex.expression_experience_count)} />
+        <MetricTile label="剧情经验" value={formatNumber(experience.plot_experience_count ?? ragIndex.plot_experience_count)} />
+        <MetricTile label="Embedding 模型" value={ragIndex.embedding_model || "-"} />
+        <MetricTile label="并行分析" value={experience.part_count ? `${experience.part_count} 份` : "-"} />
       </div>
 
       <div className="sample-section-grid">
-        <section className="sample-section-card">
-          <h2>文风指纹</h2>
-          <dl className="sample-kv">
-            <div><dt>句长均值</dt><dd>{formatNumber(sentence.avg, " 字")}</dd></div>
-            <div><dt>句长 P90</dt><dd>{formatNumber(sentence.p90, " 字")}</dd></div>
-            <div><dt>比喻密度</dt><dd>{formatNumber(style.metaphor_density_per_1k_chars, "/千字")}</dd></div>
-            <div><dt>主感官维度</dt><dd>{sensory.dominant_dimension || "-"}</dd></div>
-            <div><dt>短段落占比</dt><dd>{formatRatio(rhythm.short_paragraph_ratio)}</dd></div>
-          </dl>
-        </section>
-
-        <section className="sample-section-card">
-          <h2>情绪曲线</h2>
-          <dl className="sample-kv">
-            <div><dt>情绪波动</dt><dd>{formatNumber(emotion.volatility_avg_delta)}</dd></div>
-            <div><dt>高潮章节</dt><dd>第 {emotion.peak_chapter || "-"} 章</dd></div>
-            <div><dt>低谷章节</dt><dd>第 {emotion.valley_chapter || "-"} 章</dd></div>
-          </dl>
-          <div className="sample-chip-line">
-            {(emotion.chapter_points || []).slice(0, 10).map((point) => (
-              <span className="tag" key={point.chapter}>第 {point.chapter} 章 · {emotionLabels[point.label] || point.label}</span>
-            ))}
-          </div>
-        </section>
-
-        <section className="sample-section-card">
-          <h2>伏笔模式</h2>
-          <dl className="sample-kv">
-            <div><dt>埋设密度</dt><dd>{formatNumber(foreshadowing.planting_density_per_1k_chars, "/千字")}</dd></div>
-            <div><dt>兑现密度</dt><dd>{formatNumber(foreshadowing.payoff_density_per_1k_chars, "/千字")}</dd></div>
-            <div><dt>平均兑现周期</dt><dd>{formatNumber(foreshadowing.estimated_payoff_cycle_chapters_avg, " 章")}</dd></div>
-            <div><dt>误导密度</dt><dd>{formatNumber(foreshadowing.misdirection_strategy?.density_per_1k_chars, "/千字")}</dd></div>
-          </dl>
-        </section>
-
-        <section className="sample-section-card">
-          <h2>对白风格</h2>
-          <dl className="sample-kv">
-            <div><dt>对白占比</dt><dd>{formatRatio(dialogue.dialogue_ratio)}</dd></div>
-            <div><dt>话语均长</dt><dd>{formatNumber(dialogue.utterance_length?.avg, " 字")}</dd></div>
-            <div><dt>潜台词比例</dt><dd>{formatRatio(dialogue.subtext_ratio)}</dd></div>
-            <div><dt>解释性对白</dt><dd>{formatRatio(dialogue.explanatory_dialogue_ratio)}</dd></div>
-          </dl>
-        </section>
-
-        <section className="sample-section-card wide">
-          <h2>节奏模型</h2>
-          <dl className="sample-kv">
-            <div><dt>冲突间隔</dt><dd>{formatNumber(pacing.conflict_interval_chars_est, " 字")}</dd></div>
-            <div><dt>信息释放密度</dt><dd>{formatNumber(pacing.information_release_density_per_1k_chars, "/千字")}</dd></div>
-            <div><dt>章尾钩子强度</dt><dd>{formatRatio(pacing.ending_hook_strength_avg)}</dd></div>
-          </dl>
-          <div className="sample-chip-line">
-            {Object.entries(pacing.ending_hook_type_distribution || {}).map(([hook, count]) => (
-              <span className="tag green" key={hook}>{hookLabels[hook] || hook} · {count}</span>
-            ))}
-          </div>
-        </section>
-
-        <section className="sample-section-card wide">
-          <h2>LLM 风格策略</h2>
-          {strategy.available ? (
+        <section className="sample-section-card sample-reference-summary">
+          <h2>语言表达参考</h2>
+          {profile.available ? (
             <div className="sample-strategy-summary">
-              <span className="tag purple">{strategy.model || "LLM"}</span>
-              <p>{strategy.style_summary || "已根据量化指标生成可迁移风格策略。"}</p>
+              <span className="tag purple">{profile.model || "LLM"}</span>
+              <p>{profile.summary || "已生成少量可执行的语言表达规则。"}</p>
             </div>
           ) : (
             <div className="sample-pending-box">
-              <strong>当前仅保存量化指标</strong>
-              <span>{strategy.reason || "未配置 LLM API Key，暂未生成高阶风格策略。"}</span>
+              <strong>经验文档尚未生成</strong>
+              <span>{profile.reason || "请重新分析样本，生成剧情与表达经验文档。"}</span>
             </div>
           )}
         </section>
 
-        <GuidelineList title="生成约束" items={strategy.generation_guidelines} />
-        <GuidelineList title="反 AI 味策略" items={strategy.anti_ai_guidelines} />
-        <GuidelineList title="对白策略" items={strategy.dialogue_guidelines} />
-        <GuidelineList title="节奏策略" items={strategy.pacing_guidelines} />
-        <GuidelineList title="风险提醒" items={strategy.risk_notes} />
+        <section className="sample-section-card sample-reference-summary">
+          <h2>剧情设计参考</h2>
+          <p>事件规划时从大模型总结的剧情经验中检索完整机制，不再直接检索固定字符原文窗口。</p>
+          {ragIndex.reason ? <p>{ragIndex.reason}</p> : null}
+        </section>
+
+        <GuidelineList title="语言规则" items={profile.language_rules} />
+        <GuidelineList title="反 AI 味约束" items={profile.anti_ai_rules} />
       </div>
     </div>
   );
@@ -240,6 +142,8 @@ function SampleAnalysisContent() {
   const [selectedFile, setSelectedFile] = useState(null);
   const [loading, setLoading] = useState(false);
   const [deletingId, setDeletingId] = useState("");
+  const [reindexingId, setReindexingId] = useState("");
+  const [downloadingId, setDownloadingId] = useState("");
   const [message, setMessage] = useState("");
   const [error, setError] = useState("");
 
@@ -297,7 +201,7 @@ function SampleAnalysisContent() {
       setForm(defaultForm);
       setSelectedFile(null);
       if (fileInputRef.current) fileInputRef.current.value = "";
-      setMessage("样本已保存为分析记录，Worker 会异步分片分析并沉淀报告。");
+      setMessage("样本已保存，Worker 将最多十路并行生成创作经验文档。");
     } catch (err) {
       setError(err.message);
     } finally {
@@ -322,6 +226,40 @@ function SampleAnalysisContent() {
     }
   }
 
+  async function reindexAnalysis(analysisId) {
+    setReindexingId(analysisId);
+    setMessage("");
+    setError("");
+    try {
+      const updated = await apiFetch(`/api/sample-analyses/${analysisId}/reindex`, {
+        method: "POST"
+      });
+      setAnalyses((current) => current.map((item) => (
+        item.id === analysisId ? { ...item, ...updated } : item
+      )));
+      setMessage("样本已进入队列，将重新分析并补建剧情与语言 RAG 索引。");
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setReindexingId("");
+    }
+  }
+
+  async function downloadExperience(analysis) {
+    setDownloadingId(analysis.id);
+    setError("");
+    try {
+      await apiDownload(
+        `/api/sample-analyses/${analysis.id}/experience-document`,
+        `${analysis.sample_title || "样本"}-创作经验文档.md`
+      );
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setDownloadingId("");
+    }
+  }
+
   useEffect(() => {
     loadAnalyses().catch((err) => setError(err.message));
   }, []);
@@ -341,7 +279,7 @@ function SampleAnalysisContent() {
   return (
     <AppShell
       title="样本分析"
-      subtitle="上传优秀小说样本，沉淀可复用的量化风格特征和 LLM 写作策略"
+      subtitle="最多十路并行拆解优秀作品，生成剧情设计与精彩表达经验文档"
       actions={<span className="tag purple">独立样本库</span>}
     >
       <section className="sample-layout">
@@ -349,7 +287,7 @@ function SampleAnalysisContent() {
             <div className="panel-header">
               <div>
                 <div className="panel-title">上传优秀样本</div>
-                <div className="panel-subtitle">TXT/MD 原文进入对象存储，报告保存为用户级样本库资产。</div>
+                <div className="panel-subtitle">TXT/MD 原文最多拆成 10 份，由事件规划/审校模型并行总结后建立 Qwen 索引。</div>
               </div>
             </div>
             <form className="panel-body sample-form" onSubmit={createAnalysis}>
@@ -397,23 +335,49 @@ function SampleAnalysisContent() {
             </div>
             <div className="panel-body">
               {analyses.length === 0 ? (
-                <EmptyState title="暂无样本分析报告" description="上传一份优秀作品文本后，系统会生成可迁移的工程化风格向量。" />
+                <EmptyState title="暂无样本分析报告" description="上传优秀作品后，系统会生成剧情设计与精彩表达经验文档。" />
               ) : (
                 <div className="sample-list">
                   {analyses.map((analysis) => {
                     const expanded = expandedAnalysisIds.includes(analysis.id);
+                    const profileSummary = analysis.report?.reference_profile?.summary;
+                    const genreTags = splitGenreTags(analysis.source_genre);
                     return (
                       <article className={`sample-row ${expanded ? "active" : ""}`} key={analysis.id}>
                         <div className="sample-row-main">
                           <div className="sample-row-heading">
-                            <div>
-                              <div className="sample-row-title">{analysis.sample_title}</div>
-                              <p>{analysis.summary}</p>
+                            <div className="sample-row-copy">
+                              <div className="sample-row-title-line">
+                                <div className="sample-row-title">{analysis.sample_title}</div>
+                                <span className={`tag ${statusTone(analysis.status)}`}>{statusLabels[analysis.status] || analysis.status}</span>
+                              </div>
+                              <p className="sample-row-summary">{profileSummary || analysis.summary}</p>
                             </div>
                             <div className="sample-row-actions">
                               <button className="secondary-button" type="button" onClick={() => toggleExpanded(analysis.id)}>
                                 {expanded ? "收起" : "展开"}
                               </button>
+                              {["completed", "active", "failed"].includes(analysis.status) ? (
+                                <button
+                                  className="secondary-button"
+                                  type="button"
+                                  disabled={reindexingId === analysis.id}
+                                  onClick={() => reindexAnalysis(analysis.id)}
+                                  title="重新并行总结样本并更新经验索引"
+                                >
+                                  {reindexingId === analysis.id ? "入队中..." : "重新分析"}
+                                </button>
+                              ) : null}
+                              {analysis.report?.schema_version === "sample_experience.v1" ? (
+                                <button
+                                  className="secondary-button"
+                                  type="button"
+                                  disabled={downloadingId === analysis.id}
+                                  onClick={() => downloadExperience(analysis)}
+                                >
+                                  {downloadingId === analysis.id ? "下载中..." : "下载经验文档"}
+                                </button>
+                              ) : null}
                               <button
                                 className="danger-button"
                                 type="button"
@@ -424,13 +388,16 @@ function SampleAnalysisContent() {
                               </button>
                             </div>
                           </div>
-                          <div className="memory-tags">
-                            <span className={`tag ${statusTone(analysis.status)}`}>{statusLabels[analysis.status] || analysis.status}</span>
-                            <span className="tag green">{analysis.source_genre || "未标注题材"}</span>
-                            <span className="tag">已保存</span>
-                            <span className="tag">{formatBytes(analysis.source_file_size)}</span>
-                            {analysis.source_word_count ? <span className="tag">{formatNumber(analysis.source_word_count, " 字")}</span> : null}
-                            {analysis.chunk_count ? <span className="tag">分片 {analysis.analyzed_chunk_count}/{analysis.chunk_count}</span> : null}
+                          <div className="sample-row-meta">
+                            <div className="sample-genre-tags">
+                              {genreTags.map((tag) => <span className="tag green" key={tag}>{tag}</span>)}
+                            </div>
+                            <div className="sample-file-tags">
+                              <span>已保存</span>
+                              <span>{formatBytes(analysis.source_file_size)}</span>
+                              {analysis.source_word_count ? <span>{formatNumber(analysis.source_word_count, " 字")}</span> : null}
+                              {analysis.chunk_count ? <span>分片 {analysis.analyzed_chunk_count}/{analysis.chunk_count}</span> : null}
+                            </div>
                           </div>
                           {analysis.status === "running" ? (
                             <div className="progress sample-progress"><span style={{ width: `${progressPercent(analysis)}%` }} /></div>

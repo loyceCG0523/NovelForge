@@ -4,6 +4,7 @@ pydantic-settings
 SQLAlchemy
 alembic
 psycopg[binary]
+pgvector
 python-dotenv
 bcrypt
 PyJWT
@@ -14,3 +15,4 @@ langchain
 langgraph
 json-repair
 minio
+openpyxl

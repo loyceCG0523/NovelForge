@@ -1,13 +1,39 @@
 "use client";
 
-import { Suspense, useEffect, useMemo, useState } from "react";
+import { Suspense, useEffect, useMemo, useRef, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 
 import AppShell from "@/components/AppShell";
 import EmptyState from "@/components/EmptyState";
-import MetricCard from "@/components/MetricCard";
-import ReviewIssuePanel from "@/components/ReviewIssuePanel";
+import TaskExecutionPanel from "@/components/TaskExecutionPanel";
 import { apiFetch } from "@/lib/api";
+
+const productionModes = {
+  auto: {
+    label: "自动模式",
+    short: "连续生成完整作品，达到字数与叙事闭环后结束。",
+    detail: "系统会以剧情事件为单位连续规划、生成章节、审校和修复。适合你已经完成初始需求，希望系统尽量不打断地推进到完整作品的情况。",
+    confirm: "确认启动自动模式"
+  },
+  human_in_loop: {
+    label: "人审模式",
+    short: "先出事件大纲和章节计划，确认后再批量生成章节。",
+    detail: "系统每次只生成一个剧情事件的大纲和章节计划，然后暂停等待你编辑或确认。确认后才会批量生成该事件章节。适合你想把控大纲、节奏和关键剧情走向的情况。",
+    confirm: "确认启动人审模式"
+  },
+  tomato_trial: {
+    label: "番茄模式",
+    short: "按全书节奏推进，在 8-10 万字事件边界暂停。",
+    detail: "系统仍然按照你设置的作品总字数来控制整体节奏，但首轮只生成约 8-10 万字，并且一定在剧情事件边界暂停。适合先控制成本、观察作品成绩，后续表现理想再继续扩写。",
+    confirm: "确认启动番茄模式"
+  },
+  test_run: {
+    label: "测试模式",
+    short: "只生成 1 个剧情事件的章节，完成后暂停供你检查质量。",
+    detail: "系统会真实规划并生成 1 个剧情事件对应的章节，完成该事件后自动暂停。适合你想先看本书当前设定下的生成质量、风格和节奏，再决定是否继续批量生成的情况。",
+    confirm: "确认启动测试模式"
+  }
+};
 
 function WorkbenchContent() {
   // 工作台是成熟用户的主页面：它不直接编辑数据，而是聚合展示当前作品状态。
@@ -19,12 +45,14 @@ function WorkbenchContent() {
   const [message, setMessage] = useState("");
   const [error, setError] = useState("");
   const [trackingTaskId, setTrackingTaskId] = useState("");
+  const [taskEvents, setTaskEvents] = useState([]);
+  const [revisionPatches, setRevisionPatches] = useState([]);
+  const [modeMenuOpen, setModeMenuOpen] = useState(false);
+  const [pendingProductionMode, setPendingProductionMode] = useState("");
+  const [testRunScope, setTestRunScope] = useState("event");
+  const modePickerRef = useRef(null);
 
   const novelIdFromUrl = searchParams.get("novel");
-  const selectedProject = useMemo(
-    () => projects.find((item) => item.id === selectedId),
-    [projects, selectedId]
-  );
   const storyEvent = dashboard?.current_story_event;
   const autoRun = dashboard?.current_auto_run;
   const activeAgentTask = useMemo(
@@ -33,6 +61,52 @@ function WorkbenchContent() {
     ),
     [dashboard]
   );
+  const latestActivityTask = useMemo(
+    () => (dashboard?.latest_tasks || []).find(
+      (task) => ["generate_story_event", "continue_story_event", "check_story_event_quality"].includes(task.task_type)
+    ) || (dashboard?.latest_tasks || []).find(
+      (task) => ["produce_novel", "generate_story_event", "continue_story_event", "check_story_event_quality"].includes(task.task_type)
+    ),
+    [dashboard]
+  );
+  const activityTaskId = storyEvent?.task_id || trackingTaskId || latestActivityTask?.id || "";
+  const activityTask = useMemo(
+    () => (dashboard?.latest_tasks || []).find((task) => task.id === activityTaskId) || latestActivityTask,
+    [activityTaskId, dashboard, latestActivityTask]
+  );
+  const activityTaskFailure = activityTask?.status === "failed"
+    ? `本次生成失败：${activityTask.error_message || "请查看正文 Worker 日志后重试"}`
+    : "";
+
+  useEffect(() => {
+    setTaskEvents([]);
+    setRevisionPatches([]);
+  }, [selectedId]);
+
+  useEffect(() => {
+    if (!selectedId || !activityTaskId) return undefined;
+    let stopped = false;
+    async function pollActivity() {
+      try {
+        const [events, patches] = await Promise.all([
+          apiFetch(`/api/novels/${selectedId}/tasks/${activityTaskId}/events?limit=500`),
+          apiFetch(`/api/novels/${selectedId}/tasks/${activityTaskId}/revision-patches`)
+        ]);
+        if (!stopped) {
+          setTaskEvents(events);
+          setRevisionPatches(patches);
+        }
+      } catch (err) {
+        if (!stopped && !String(err.message).includes("404")) setError(err.message);
+      }
+    }
+    pollActivity();
+    const timer = window.setInterval(pollActivity, 1500);
+    return () => {
+      stopped = true;
+      window.clearInterval(timer);
+    };
+  }, [selectedId, activityTaskId]);
 
   async function loadProjects() {
     // 先拿作品列表，再决定当前要展示 URL 指定作品还是默认第一部作品。
@@ -64,6 +138,19 @@ function WorkbenchContent() {
   }, [activeAgentTask, trackingTaskId]);
 
   useEffect(() => {
+    if (!modeMenuOpen) return undefined;
+
+    function closeOnOutsideClick(event) {
+      if (!modePickerRef.current?.contains(event.target)) {
+        setModeMenuOpen(false);
+      }
+    }
+
+    document.addEventListener("mousedown", closeOnOutsideClick);
+    return () => document.removeEventListener("mousedown", closeOnOutsideClick);
+  }, [modeMenuOpen]);
+
+  useEffect(() => {
     if (!selectedId || !trackingTaskId) return undefined;
 
     let stopped = false;
@@ -75,6 +162,9 @@ function WorkbenchContent() {
 
         if (task.status === "completed") {
           setMessage(task.task_type === "produce_novel" ? "自动生产任务已完成，工作台数据已刷新" : "剧情事件任务已完成，工作台数据已刷新");
+          setTrackingTaskId("");
+        } else if (task.status === "cancelled") {
+          setMessage("已暂停：Worker 重启前遗留的任务已回收，可重新继续生成。");
           setTrackingTaskId("");
         } else if (task.status === "failed") {
           setError(`Agent 执行失败：${task.error_message || "请查看 Worker 日志"}`);
@@ -122,19 +212,53 @@ function WorkbenchContent() {
     }
   }
 
-  async function startAutoProduction() {
+  async function retryMemorySync(memoryTaskId) {
+    if (!selectedId || !activityTaskId) return;
+    setError("");
+    try {
+      await apiFetch(`/api/novels/${selectedId}/tasks/${activityTaskId}/memory-sync/${memoryTaskId}/retry`, {
+        method: "POST"
+      });
+      setMessage("失败章节的记忆与时间线已重新排队，正文无需重跑。");
+    } catch (err) {
+      setError(err.message);
+    }
+  }
+
+  async function retryEventRevision() {
+    if (!selectedId || !activityTaskId) return;
+    setError("");
+    try {
+      await apiFetch(`/api/novels/${selectedId}/tasks/${activityTaskId}/event-revision/retry`, {
+        method: "POST"
+      });
+      setMessage("失败章节的事件补丁已单独排队，将复用原修订蓝图。其他章节不会重跑。");
+    } catch (err) {
+      setError(err.message);
+    }
+  }
+
+  async function startAutoProduction(productionMode = "auto", selectedTestRunScope = "event") {
+    setPendingProductionMode("");
+    setModeMenuOpen(false);
     setMessage("");
     setError("");
     try {
       const task = await apiFetch(`/api/novels/${selectedId}/auto-runs/start`, {
         method: "POST",
         body: JSON.stringify({
-          chapter_count_per_event: 8,
-          max_event_count: 20
+          max_event_count: 20,
+          production_mode: productionMode,
+          test_run_scope: selectedTestRunScope
         })
       });
       setTrackingTaskId(task.id);
-      setMessage("已启动整本书自动生产，系统会按剧情事件连续推进。");
+      setMessage({
+        auto: "已启动自动模式：系统会按剧情事件连续推进。",
+        human_in_loop: "已启动 Human-in-loop 模式：系统会先生成事件大纲和章节计划，等待你确认。",
+        tomato_trial: "已启动番茄模式：系统按全书节奏推进，并在 8-10 万字事件边界暂停。",
+        test_run: selectedTestRunScope === "first_chapter" ? "已启动测试模式：系统会生成首章后自动暂停。" : "已启动测试模式：系统会生成 1 个剧情事件的章节，完成后自动暂停。"
+      }[productionMode] || "已启动自动生产。");
       await loadDashboard(selectedId);
     } catch (err) {
       setError(err.message);
@@ -146,7 +270,7 @@ function WorkbenchContent() {
     setError("");
     try {
       await apiFetch(`/api/novels/${selectedId}/auto-runs/pause`, { method: "POST" });
-      setMessage("已请求暂停，系统会在当前剧情事件完成后停下。");
+      setMessage("已请求暂停。当前单次模型调用返回后会立刻停止，不会继续生成后续章节。");
       await loadDashboard(selectedId);
     } catch (err) {
       setError(err.message);
@@ -159,7 +283,22 @@ function WorkbenchContent() {
     try {
       const task = await apiFetch(`/api/novels/${selectedId}/auto-runs/resume`, { method: "POST" });
       setTrackingTaskId(task.id);
-      setMessage("已继续整本书自动生产。");
+      setDashboard((current) => {
+        if (!current?.current_auto_run) return current;
+        return {
+          ...current,
+          current_auto_run: {
+            ...current.current_auto_run,
+            task_id: task.id,
+            task_status: task.status || "queued",
+            task_progress: task.progress || 0,
+            status: "running",
+            stage: "queued",
+            last_error: ""
+          }
+        };
+      });
+      setMessage(task.task_type === "continue_story_event" ? "已开始修正当前章节，正在继续该剧情事件。" : "已继续自动生产，任务已进入队列。");
       await loadDashboard(selectedId);
     } catch (err) {
       setError(err.message);
@@ -168,30 +307,134 @@ function WorkbenchContent() {
 
   function renderProductionAction() {
     if (!selectedId) return null;
-    if (autoRun?.status === "running" || activeAgentTask?.task_type === "produce_novel") {
+    if (autoRun?.status === "running") {
       return <button className="secondary-button" onClick={pauseAutoProduction}>暂停自动生产</button>;
     }
-    if (autoRun?.status === "paused" || autoRun?.status === "failed") {
-      return <button className="primary-button" disabled={Boolean(trackingTaskId || activeAgentTask)} onClick={resumeAutoProduction}>继续自动生产</button>;
+    if (autoRun?.status === "paused" && activeAgentTask) {
+      return <button className="secondary-button" disabled>正在停止当前步骤…</button>;
     }
-    return <button className="primary-button" disabled={Boolean(trackingTaskId || activeAgentTask)} onClick={startAutoProduction}>开始自动生成</button>;
+    if (autoRun?.payload?.human_loop_status === "waiting_plan_confirmation" && autoRun?.payload?.pending_human_event_id) {
+      return (
+        <button
+          className="primary-button"
+          onClick={() => router.push(`/story-events?novel=${selectedId}&event=${autoRun.payload.pending_human_event_id}`)}
+        >
+          编辑/确认章节计划
+        </button>
+      );
+    }
+    if (autoRun?.status === "paused" || autoRun?.status === "failed") {
+      const needsWordRevision = autoRun?.payload?.stop_reason === "chapter_word_revision_required";
+      const failedQualityRevision = autoRun?.payload?.stop_reason === "event_generation_failed";
+      const needsQualityRevision = [
+        "test_first_chapter_quality_revision_required",
+        "event_quality_revision_required",
+        "event_generation_failed"
+      ].includes(autoRun?.payload?.stop_reason);
+      const resumeLabel = needsWordRevision
+        ? "继续修正本章字数"
+        : (failedQualityRevision ? "重试失败的审校" : (needsQualityRevision ? "继续修复事件质量" : "继续自动生产"));
+      return <button className="primary-button" disabled={Boolean(trackingTaskId || activeAgentTask)} onClick={resumeAutoProduction}>{resumeLabel}</button>;
+    }
+    return (
+      <div className="writing-mode-picker" ref={modePickerRef}>
+        <button
+          className={`writing-mode-trigger ${modeMenuOpen ? "open" : ""}`}
+          disabled={Boolean(trackingTaskId || activeAgentTask)}
+          type="button"
+          aria-haspopup="listbox"
+          aria-expanded={modeMenuOpen}
+          onClick={() => setModeMenuOpen((current) => !current)}
+        >
+          <span>
+            <em>撰写模式</em>
+            <strong>请选择生成方式</strong>
+          </span>
+          <i aria-hidden="true">
+            <svg viewBox="0 0 20 20" focusable="false">
+              <path d="M5.5 7.5L10 12l4.5-4.5" />
+            </svg>
+          </i>
+        </button>
+        {modeMenuOpen ? (
+          <div className="writing-mode-menu" role="listbox">
+            {Object.entries(productionModes).map(([mode, item]) => (
+              <button
+                className="writing-mode-option"
+                key={mode}
+                type="button"
+                role="option"
+                onClick={() => {
+                  setModeMenuOpen(false);
+                  if (mode === "test_run") setTestRunScope("event");
+                  setPendingProductionMode(mode);
+                }}
+              >
+                <span className="mode-option-mark" aria-hidden="true" />
+                <span className="mode-option-copy">
+                  <strong>{item.label}</strong>
+                  <small>{item.short}</small>
+                </span>
+              </button>
+            ))}
+          </div>
+        ) : null}
+      </div>
+    );
   }
 
+  const pendingMode = pendingProductionMode ? productionModes[pendingProductionMode] : null;
+  const isTestRunConfirmation = pendingProductionMode === "test_run";
+  const testRunDetail = testRunScope === "first_chapter"
+    ? "系统会先规划一个剧情事件，但只生成该事件的首章；首章完成后自动暂停。适合以较低成本检查文风、开场节奏和当前设定下的生成质量。"
+    : "系统会先规划一个完整剧情事件，再生成该事件的全部章节；完成该事件后自动暂停。适合检查剧情闭环、章节衔接、文风和整体节奏。";
+  const confirmationLabel = isTestRunConfirmation
+    ? (testRunScope === "first_chapter" ? "确认生成首章" : "确认生成完整事件")
+    : pendingMode?.confirm;
   return (
     <AppShell
       title="创作工作台"
-      subtitle="聚焦当前剧情事件、系统审校状态和一键生成操作"
+      subtitle="聚焦生成流程、章节正文与局部修改"
       actions={
-        <>
-          <select className="secondary-button" value={selectedId} onChange={(event) => setSelectedId(event.target.value)}>
+        <div className="workbench-actions">
+          <select className="workbench-project-select" value={selectedId} onChange={(event) => setSelectedId(event.target.value)}>
             {projects.map((project) => <option key={project.id} value={project.id}>{project.title}</option>)}
           </select>
-          <button className="secondary-button" disabled={!selectedId} onClick={() => router.push(`/chapters?novel=${selectedId}`)}>章节管理</button>
-          <button className="secondary-button" disabled={!selectedId} onClick={() => router.push(`/story-events?novel=${selectedId}`)}>剧情事件</button>
           {renderProductionAction()}
-        </>
+        </div>
       }
     >
+      {pendingMode ? (
+        <div className="modal-backdrop" role="presentation" onClick={() => setPendingProductionMode("")}>
+          <div className="confirm-dialog production-mode-dialog" role="dialog" aria-modal="true" onClick={(event) => event.stopPropagation()}>
+            <div>
+              <div className="panel-title">{pendingMode.label}</div>
+              <div className="panel-subtitle">{isTestRunConfirmation ? "启动前请确认本次测试范围。" : "启动前请确认你选择的撰写模式。"}</div>
+            </div>
+            <div className="production-mode-explain">
+              <strong>{isTestRunConfirmation ? "本次测试会怎么工作？" : "这个模式会怎么工作？"}</strong>
+              <p>{isTestRunConfirmation ? testRunDetail : pendingMode.detail}</p>
+            </div>
+            {pendingProductionMode === "test_run" ? (
+              <div className="test-run-scope-options" role="radiogroup" aria-label="测试范围">
+                <strong>本次测试范围</strong>
+                <label className={testRunScope === "event" ? "active" : ""}>
+                  <input type="radio" name="test-run-scope" value="event" checked={testRunScope === "event"} onChange={() => setTestRunScope("event")} />
+                  <span><b>生成完整事件</b><small>规划并生成一个剧情事件的全部章节后暂停。</small></span>
+                </label>
+                <label className={testRunScope === "first_chapter" ? "active" : ""}>
+                  <input type="radio" name="test-run-scope" value="first_chapter" checked={testRunScope === "first_chapter"} onChange={() => setTestRunScope("first_chapter")} />
+                  <span><b>生成首章</b><small>规划剧情事件后只生成首章，再自动暂停。</small></span>
+                </label>
+              </div>
+            ) : null}
+            <div className="inline-actions dialog-actions">
+              <button type="button" className="secondary-button" onClick={() => setPendingProductionMode("")}>取消</button>
+              <button type="button" className="primary-button" onClick={() => startAutoProduction(pendingProductionMode, testRunScope)}>{confirmationLabel}</button>
+            </div>
+          </div>
+        </div>
+      ) : null}
       {projects.length === 0 ? (
         <EmptyState
           title="还没有可创作的作品"
@@ -200,112 +443,19 @@ function WorkbenchContent() {
         />
       ) : (
         <>
-          <section className="grid-4">
-            <MetricCard label="当前作品" value={dashboard?.novel?.title || selectedProject?.title || "-"} note={dashboard?.novel?.genre || selectedProject?.genre || "未分类"} />
-            <MetricCard label="章节数量" value={dashboard?.counts?.chapters ?? 0} note={`当前第 ${dashboard?.novel?.current_chapter_index ?? 0} 章`} tone="green" />
-            <MetricCard label="正文总字数" value={`${(dashboard?.counts?.words ?? 0).toLocaleString()} 字`} note={`目标 ${(dashboard?.novel?.target_words ?? 0).toLocaleString()} 字`} tone="purple" />
-            <MetricCard label="审校记录" value={dashboard?.review_issues?.length ?? 0} note="系统自动记录" tone="green" />
-          </section>
-
-          {(message || error) ? <div className={error ? "error-box" : "hint-panel"}>{error || message}</div> : null}
-
-          <section className="panel production-panel">
-            <div className="panel-header">
-              <div>
-                <div className="panel-title">自动生产总控</div>
-                <div className="panel-subtitle">用户完成起始需求后，系统按剧情事件自动生成、审校、修复并继续推进。</div>
-              </div>
-              <span className={`tag ${autoRun?.status === "running" ? "yellow" : autoRun?.status === "completed" ? "green" : "purple"}`}>
-                {autoRun?.status || "未启动"}
-              </span>
+          {(message || error || activityTaskFailure) ? (
+            <div className={(error || activityTaskFailure) ? "error-box" : "hint-panel workbench-notice"}>
+              {error || activityTaskFailure || message}
             </div>
-            <div className="panel-body production-body">
-              <div className="production-main">
-                <div>
-                  <span className="tag purple">NovelProductionAgent</span>
-                  <h2>{autoRun?.stage || "等待开始自动生产"}</h2>
-                  <p>{autoRun?.last_error || "系统会以一个完整剧情事件为单位推进，每轮生成多章并自动完成审校闭环。"}</p>
-                </div>
-                <div className="story-event-progress">
-                  <strong>{(autoRun?.current_words || dashboard?.counts?.words || 0).toLocaleString()} / {(autoRun?.target_words || dashboard?.novel?.target_words || 0).toLocaleString()}</strong>
-                  <span>正文总字数</span>
-                  <div className="progress">
-                    <span style={{ width: `${autoRun?.word_progress ?? Math.min(100, Math.round(((dashboard?.counts?.words || 0) / Math.max(dashboard?.novel?.target_words || 1, 1)) * 100))}%` }} />
-                  </div>
-                  <em>{activeAgentTask?.task_type === "produce_novel" ? activeAgentTask.status : "按事件边界推进"}</em>
-                </div>
-              </div>
-              <div className="story-event-stats">
-                <div><span>生产事件</span><strong>{autoRun?.produced_event_count || 0} / {autoRun?.max_event_count || 20}</strong></div>
-                <div><span>当前阶段</span><strong>{autoRun?.stage || "未启动"}</strong></div>
-                <div><span>生产状态</span><strong>{autoRun?.status || "idle"}</strong></div>
-                <div><span>最近任务</span><strong>{activeAgentTask?.task_type || "无"}</strong></div>
-              </div>
-            </div>
-          </section>
-
-          <section className="panel story-event-panel">
-            <div className="panel-header">
-              <div>
-                <div className="panel-title">当前剧情事件</div>
-                <div className="panel-subtitle">围绕一个完整大事件生成多章，并展示 LangGraph 执行进度。</div>
-              </div>
-              {storyEvent ? <span className={`tag ${storyEvent.task_status === "running" ? "yellow" : "green"}`}>{storyEvent.task_status}</span> : null}
-              {storyEvent?.id ? <button className="secondary-button" onClick={() => router.push(`/story-events?novel=${selectedId}&event=${storyEvent.id}`)}>查看事件</button> : null}
-            </div>
-            {storyEvent ? (
-              <div className="panel-body story-event-body">
-                <div className="story-event-main">
-                  <div>
-                    <span className="tag purple">StoryPlanningAgent</span>
-                    <h2>{storyEvent.event_title || "剧情事件生成中"}</h2>
-                    <p>{storyEvent.event_goal || "事件目标正在规划中。"}</p>
-                  </div>
-                  <div className="story-event-progress">
-                    <strong>{storyEvent.generated_chapter_count || 0} / {storyEvent.planned_chapter_count || 0}</strong>
-                    <span>已生成章节</span>
-                    <div className="progress">
-                      <span style={{ width: `${storyEvent.planned_chapter_count ? Math.round((storyEvent.generated_chapter_count / storyEvent.planned_chapter_count) * 100) : storyEvent.progress || 4}%` }} />
-                    </div>
-                    <em>{storyEvent.graph_status || "等待 Graph 状态更新"}</em>
-                  </div>
-                </div>
-                <div className="story-event-stats">
-                  <div><span>核心冲突</span><strong>{storyEvent.core_conflict || "未生成"}</strong></div>
-                  <div><span>章节范围</span><strong>{storyEvent.chapter_range?.start ? `第 ${storyEvent.chapter_range.start}-${storyEvent.chapter_range.end} 章` : "生成中"}</strong></div>
-                  <div><span>自动修复</span><strong>{storyEvent.auto_repair_count || 0} 次</strong></div>
-                  <div><span>后续处理</span><strong>{storyEvent.remaining_open_risks || 0} 条</strong></div>
-                </div>
-                <div className="event-plan-list">
-                  {(storyEvent.chapter_plans || []).map((plan) => {
-                    const generated = (storyEvent.generated_chapters || []).find((chapter) => chapter.chapter_index === plan.chapter_index);
-                    return (
-                      <article className={generated ? "event-plan-item done" : "event-plan-item"} key={`${storyEvent.task_id}-${plan.chapter_index}`}>
-                        <div>
-                          <span>第 {plan.chapter_index} 章 · {plan.function || "推进"}</span>
-                          <strong>{generated?.title || plan.title || "未命名章节"}</strong>
-                          <p>{plan.core_event || "章节核心事件待生成。"}</p>
-                        </div>
-                        <em>{generated ? `${generated.word_count || 0} 字` : "待生成"}</em>
-                      </article>
-                    );
-                  })}
-                </div>
-                {storyEvent.next_event_hook ? <div className="hint-panel">下一事件钩子：{storyEvent.next_event_hook}</div> : null}
-              </div>
-            ) : (
-              <div className="panel-body">
-                <EmptyState title="暂无剧情事件" description="点击“开始自动生成”，系统会规划一个 8 章左右的闭环大事件并连续生成。" />
-              </div>
-            )}
-          </section>
-
-          <ReviewIssuePanel
-            title="系统审校记录"
-            subtitle="系统发现质量事项后会自动修复或转入后续处理，这里只展示过程记录。"
-            issues={dashboard?.review_issues || dashboard?.open_review_issues || []}
-            emptyTitle="暂无审校记录"
-            emptyDescription="章节生成后的连续性审校和自动修复历史会显示在这里。"
+          ) : null}
+          <TaskExecutionPanel
+            events={taskEvents}
+            patches={revisionPatches}
+            active={Boolean(activeAgentTask || trackingTaskId)}
+            taskStatus={activityTask?.status || ""}
+            taskError={activityTask?.error_message || ""}
+            onRetryMemory={retryMemorySync}
+            onRetryEventRevision={retryEventRevision}
           />
         </>
       )}

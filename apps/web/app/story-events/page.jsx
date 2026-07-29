@@ -32,7 +32,7 @@ function scoreTone(score) {
 }
 
 function StoryEventsContent() {
-  // 剧情事件页是事件级生成的控制台：查看计划、重跑单章、从某章继续。
+  // 剧情事件页只处理事件级信息：查看与编辑计划、事件审校、重跑单章或从某章继续。
   const router = useRouter();
   const searchParams = useSearchParams();
   const [projects, setProjects] = useState([]);
@@ -42,6 +42,8 @@ function StoryEventsContent() {
   const [eventDetail, setEventDetail] = useState(null);
   const [trackingTaskId, setTrackingTaskId] = useState("");
   const [busyPlanId, setBusyPlanId] = useState("");
+  const [planDraft, setPlanDraft] = useState(null);
+  const [savingPlan, setSavingPlan] = useState(false);
   const [message, setMessage] = useState("");
   const [error, setError] = useState("");
 
@@ -94,6 +96,27 @@ function StoryEventsContent() {
       loadEventDetail(selectedNovelId, selectedEventId).catch((err) => setError(err.message));
     }
   }, [selectedEventId]);
+
+  useEffect(() => {
+    if (!eventDetail) {
+      setPlanDraft(null);
+      return;
+    }
+    setPlanDraft({
+      title: eventDetail.title || "",
+      goal: eventDetail.goal || "",
+      core_conflict: eventDetail.core_conflict || "",
+      next_event_hook: eventDetail.next_event_hook || "",
+      completion_criteria: eventDetail.completion_criteria || [],
+      chapter_plans: (eventDetail.plans || []).map((plan) => ({
+        id: plan.id,
+        title: plan.title || "",
+        function: plan.function || "",
+        core_event: plan.core_event || "",
+        ending_hook: plan.ending_hook || ""
+      }))
+    });
+  }, [eventDetail?.id]);
 
   useEffect(() => {
     if (!selectedNovelId || !selectedEventId || !trackingTaskId) return undefined;
@@ -180,6 +203,57 @@ function StoryEventsContent() {
     }
   }
 
+  function updatePlanDraft(field, value) {
+    setPlanDraft((current) => ({ ...(current || {}), [field]: value }));
+  }
+
+  function updateChapterPlanDraft(planId, field, value) {
+    setPlanDraft((current) => ({
+      ...(current || {}),
+      chapter_plans: (current?.chapter_plans || []).map((plan) => (
+        plan.id === planId ? { ...plan, [field]: value } : plan
+      ))
+    }));
+  }
+
+  async function savePlanDraft() {
+    if (!selectedNovelId || !selectedEventId || !planDraft) return null;
+    setMessage("");
+    setError("");
+    setSavingPlan(true);
+    try {
+      const updated = await apiFetch(`/api/novels/${selectedNovelId}/story-events/${selectedEventId}/plan`, {
+        method: "PATCH",
+        body: JSON.stringify(planDraft)
+      });
+      setEventDetail(updated);
+      setMessage("章节计划已保存");
+      return updated;
+    } catch (err) {
+      setError(err.message);
+      return null;
+    } finally {
+      setSavingPlan(false);
+    }
+  }
+
+  async function confirmPlanAndGenerate() {
+    if (!selectedNovelId || !selectedEventId) return;
+    const saved = await savePlanDraft();
+    if (!saved) return;
+    setMessage("");
+    setError("");
+    try {
+      const task = await apiFetch(`/api/novels/${selectedNovelId}/story-events/${selectedEventId}/confirm`, {
+        method: "POST"
+      });
+      setTrackingTaskId(task.id);
+      setMessage("已确认章节计划，开始批量生成本事件章节");
+    } catch (err) {
+      setError(err.message);
+    }
+  }
+
   return (
     <AppShell
       title="剧情事件"
@@ -198,7 +272,7 @@ function StoryEventsContent() {
       {projects.length === 0 ? (
         <EmptyState title="还没有作品" description="请先创建作品，再生成剧情事件。" action={<a className="primary-button" href="/projects">去创建作品</a>} />
       ) : events.length === 0 ? (
-        <EmptyState title="暂无剧情事件" description="先在工作台点击“开始自动生成”，系统会规划并生成 6-12 章闭环剧情。" action={<button className="primary-button" onClick={() => router.push(`/workbench?novel=${selectedNovelId}`)}>去工作台生成</button>} />
+        <EmptyState title="暂无剧情事件" description="先在工作台点击“开始自动生成”，系统会按作品设置规划并生成 4-12 章闭环剧情。" action={<button className="primary-button" onClick={() => router.push(`/workbench?novel=${selectedNovelId}`)}>去工作台生成</button>} />
       ) : (
         <section className="event-console">
           <aside className="panel event-sidebar">
@@ -231,8 +305,18 @@ function StoryEventsContent() {
                   <div className="panel-body event-hero">
                     <div>
                       <span className="tag purple">StoryPlanningAgent</span>
-                      <h2>{eventDetail.title || "未命名事件"}</h2>
-                      <p>{eventDetail.goal || "暂无事件目标。"}</p>
+                      {eventDetail.status === "planned" && planDraft ? (
+                        <div className="field-stack">
+                          <div className="field"><label>事件标题</label><input value={planDraft.title} onChange={(event) => updatePlanDraft("title", event.target.value)} /></div>
+                          <div className="field"><label>事件目标</label><textarea value={planDraft.goal} onChange={(event) => updatePlanDraft("goal", event.target.value)} rows={3} /></div>
+                          <div className="field"><label>核心冲突</label><textarea value={planDraft.core_conflict} onChange={(event) => updatePlanDraft("core_conflict", event.target.value)} rows={2} /></div>
+                        </div>
+                      ) : (
+                        <>
+                          <h2>{eventDetail.title || "未命名事件"}</h2>
+                          <p>{eventDetail.goal || "暂无事件目标。"}</p>
+                        </>
+                      )}
                     </div>
                     <div className="story-event-progress">
                       <strong>{eventDetail.generated_chapter_count || 0} / {eventDetail.planned_chapter_count || 0}</strong>
@@ -243,6 +327,16 @@ function StoryEventsContent() {
                       <em>{eventDetail.graph_status || statusText(eventDetail.status)}</em>
                     </div>
                   </div>
+                  {eventDetail.status === "planned" ? (
+                    <div className="inline-actions" style={{ padding: "0 24px 18px" }}>
+                      <button className="secondary-button" disabled={savingPlan || Boolean(trackingTaskId)} onClick={savePlanDraft}>
+                        {savingPlan ? "保存中" : "保存计划"}
+                      </button>
+                      <button className="primary-button" disabled={savingPlan || Boolean(trackingTaskId)} onClick={confirmPlanAndGenerate}>
+                        确认并生成本事件章节
+                      </button>
+                    </div>
+                  ) : null}
                   <div className="event-facts">
                     <div><span>核心冲突</span><strong>{eventDetail.core_conflict || "未生成"}</strong></div>
                     <div><span>章节范围</span><strong>第 {eventDetail.start_chapter_index || "-"}-{eventDetail.end_chapter_index || "-"} 章</strong></div>
@@ -331,8 +425,19 @@ function StoryEventsContent() {
                           <span>{plan.function || "推进"}</span>
                           <span>{statusText(plan.status)}</span>
                         </div>
-                        <p>{plan.core_event || "暂无本章核心事件。"}</p>
-                        {plan.ending_hook ? <em>章末钩子：{plan.ending_hook}</em> : null}
+                        {eventDetail.status === "planned" && planDraft ? (
+                          <div className="field-stack">
+                            <div className="field"><label>章节标题</label><input value={(planDraft.chapter_plans || []).find((item) => item.id === plan.id)?.title || ""} onChange={(event) => updateChapterPlanDraft(plan.id, "title", event.target.value)} /></div>
+                            <div className="field"><label>章节功能</label><input value={(planDraft.chapter_plans || []).find((item) => item.id === plan.id)?.function || ""} onChange={(event) => updateChapterPlanDraft(plan.id, "function", event.target.value)} /></div>
+                            <div className="field"><label>本章核心事件</label><textarea value={(planDraft.chapter_plans || []).find((item) => item.id === plan.id)?.core_event || ""} onChange={(event) => updateChapterPlanDraft(plan.id, "core_event", event.target.value)} rows={3} /></div>
+                            <div className="field"><label>章末钩子</label><input value={(planDraft.chapter_plans || []).find((item) => item.id === plan.id)?.ending_hook || ""} onChange={(event) => updateChapterPlanDraft(plan.id, "ending_hook", event.target.value)} /></div>
+                          </div>
+                        ) : (
+                          <>
+                            <p>{plan.core_event || "暂无本章核心事件。"}</p>
+                            {plan.ending_hook ? <em>章末钩子：{plan.ending_hook}</em> : null}
+                          </>
+                        )}
                         {plan.issues?.length ? (
                           <div className="event-card-issues">
                             {plan.issues.slice(0, 2).map((issue) => (

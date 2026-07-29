@@ -20,6 +20,13 @@ class Settings(BaseSettings):
     database_url: str
     redis_url: str
     agent_task_queue: str = "novelforge:agent_tasks"
+    memory_task_queue: str = "novelforge:memory_tasks"
+    task_lease_seconds: int = 270
+    task_heartbeat_seconds: int = 15
+    task_recovery_interval_seconds: int = 30
+    embedding_dimensions: int = 1536
+    embedding_batch_size: int = 20
+    sample_rag_max_passages: int = 2400
     s3_endpoint: str
     s3_bucket: str
     s3_access_key_id: str

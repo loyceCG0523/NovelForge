@@ -49,6 +49,7 @@ logs/
 *.log
 
 # Local data and generated files
+.runtime/
 tmp/
 temp/
 uploads/

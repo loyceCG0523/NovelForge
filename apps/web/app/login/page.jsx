@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 
 import { login, setSession } from "@/lib/api";
 
@@ -11,12 +11,21 @@ export default function LoginPage() {
   const router = useRouter();
   const [form, setForm] = useState({ email: "linchuan@example.com", password: "test123456" });
   const [error, setError] = useState("");
+  const [notice, setNotice] = useState("");
   const [loading, setLoading] = useState(false);
+
+  useEffect(() => {
+    const message = sessionStorage.getItem("novelforge_login_notice");
+    if (!message) return;
+    setNotice(message);
+    sessionStorage.removeItem("novelforge_login_notice");
+  }, []);
 
   async function handleSubmit(event) {
     // 表单提交期间锁定按钮，避免重复登录请求。
     event.preventDefault();
     setError("");
+    setNotice("");
     setLoading(true);
     try {
       const data = await login(form);
@@ -63,6 +72,7 @@ export default function LoginPage() {
               <label>密码</label>
               <input type="password" value={form.password} onChange={(event) => setForm({ ...form, password: event.target.value })} />
             </div>
+            {notice ? <div className="hint-panel">{notice}</div> : null}
             {error ? <div className="error-box">{error}</div> : null}
             <button className="primary-button" disabled={loading}>{loading ? "登录中..." : "登录并进入工作台"}</button>
           </form>

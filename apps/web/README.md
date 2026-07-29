@@ -62,7 +62,9 @@ npm run build
 | 剧情事件 | `/story-events` | 查看一个闭环剧情事件、章节计划、事件级风险和重跑入口 |
 | 章节管理 | `/chapters` | 维护章节列表、摘要、正文、上下文快照和章节风险 |
 | 作品管理 | `/projects` | 多作品管理、起始需求文档编辑、作品圣经状态 |
-| 样本分析 | `/sample-analysis` | 上传 TXT/MD 样本，异步生成风格工程特征报告 |
+| 资料检索 | `/research` | 管理事件生成使用的现实资料及来源 |
+| 热梗库 | `/meme-library` | 管理系统内置库和用户导入扩展库 |
+| 样本分析 | `/sample-analysis` | 建立剧情设计与语言表达双通道 RAG 索引 |
 | 设置 | `/personalization` | 账号信息、创作偏好、自动化策略、LLM API Key |
 
 兼容路由：
@@ -73,7 +75,6 @@ npm run build
 | `/register` | 注册 |
 | `/chapter-canvas` | 专注阅读章节正文 |
 | `/memory` | 结构化记忆维护页，不作为主导航入口 |
-| `/user` | 兼容旧用户中心路由，跳转到设置页 |
 
 ## 核心页面说明
 

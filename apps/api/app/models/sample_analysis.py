@@ -11,7 +11,7 @@ from app.models.mixins import IdMixin, TimestampMixin
 
 
 class SampleAnalysis(IdMixin, TimestampMixin, Base):
-    """优秀小说样本的结构化风格工程报告，不保存原文。"""
+    """优秀作品的经验报告；原文件在对象存储，经验卡另建向量索引。"""
 
     __tablename__ = "sample_analyses"
 

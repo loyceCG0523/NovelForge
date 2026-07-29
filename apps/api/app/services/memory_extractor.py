@@ -12,11 +12,13 @@ from sqlalchemy.orm import Session
 
 from app.models.chapter import Chapter
 from app.models.memory_item import MemoryItem
-from app.models.novel import Novel
-from app.services.llm_client import LLMClient, LLMConfig
 
 
-AUTO_MEMORY_SOURCES = {"memory_extractor", "memory_extractor_fallback"}
+AUTO_MEMORY_SOURCES = {
+    "memory_extractor",
+    "memory_extractor_fallback",
+    "chapter_fact_delta",
+}
 ALLOWED_MEMORY_TYPES = {
     "character",
     "relationship",
@@ -336,66 +338,6 @@ def delete_memory_group(db: Session, novel_id: object, memory_id: object) -> int
     return deleted_count
 
 
-def build_memory_extraction_prompt(novel: Novel, chapter: Chapter) -> list[dict[str, str]]:
-    """构造结构化记忆抽取 prompt，要求模型返回稳定 JSON。"""
-    brief = novel.brief or {}
-    return [
-        {
-            "role": "system",
-            "content": (
-                "你是 NovelForge 的结构化记忆抽取器。你的任务不是润色小说，"
-                "而是从章节正文中提取后续创作必须保持一致的事实。"
-                "只输出 JSON，不要输出解释、Markdown 或代码块。"
-            ),
-        },
-        {
-            "role": "user",
-            "content": (
-                "请从以下章节中抽取结构化记忆。\n"
-                "同一人物、地点、道具必须使用稳定实体名，例如写“许清禾”，不要写“女主许清禾”。\n"
-                "同一事件在不同句子中重复出现时，只保留一条最完整的事实。\n"
-                "人物记忆只能记录稳定档案信息，例如身份、年龄、年级、外貌、性格、家庭、能力、目标、秘密、长期状态；"
-                "不要把某次比赛、送东西、补课、受伤、报名等一次性动作写进 character，应写入 event 或 relationship。\n"
-                "输出格式必须为：\n"
-                "{\n"
-                '  "memories": [\n'
-                "    {\n"
-                '      "memory_type": "character|relationship|location|item|event|timeline|world_rule",\n'
-                '      "entity_name": "实体名称",\n'
-                '      "payload": {\n'
-                '        "summary": "一句话事实摘要；character 类型必须是人物档案摘要，不能是事件摘要",\n'
-                '        "profile": {\n'
-                '          "identity": "身份/角色，例如高三二班学生",\n'
-                '          "age": "年龄，不明确则留空",\n'
-                '          "grade": "年级/班级，不明确则留空",\n'
-                '          "appearance": "外貌特征，不明确则留空",\n'
-                '          "personality": "稳定性格，不明确则留空",\n'
-                '          "family": "家庭信息，不明确则留空",\n'
-                '          "ability": "能力/成绩/特长，不明确则留空",\n'
-                '          "goal": "长期目标，不明确则留空",\n'
-                '          "secret": "秘密/隐情，不明确则留空",\n'
-                '          "relationship": "长期人际关系，不明确则留空",\n'
-                '          "stable_state": "长期状态，不明确则留空"\n'
-                "        },\n"
-                '        "evidence": "对应正文依据",\n'
-                '        "status": "当前状态",\n'
-                '        "importance": "low|medium|high"\n'
-                "      }\n"
-                "    }\n"
-                "  ]\n"
-                "}\n\n"
-                f"作品标题：{novel.title}\n"
-                f"题材：{novel.genre or '未设置'}\n"
-                f"作品设定：{brief}\n"
-                f"章节序号：第 {chapter.chapter_index} 章\n"
-                f"章节标题：{chapter.title or '未命名章节'}\n"
-                f"章节摘要：{chapter.summary or '暂无摘要'}\n"
-                f"章节正文：\n{chapter.content or ''}"
-            ),
-        },
-    ]
-
-
 def normalize_memory_items(raw_items: Any, chapter_index: int) -> list[dict[str, Any]]:
     """清洗模型输出，避免脏字段直接进入记忆表。"""
     if not isinstance(raw_items, list):
@@ -453,41 +395,6 @@ def build_fallback_memory(chapter: Chapter) -> list[dict[str, Any]]:
             },
         }
     ]
-
-
-def extract_chapter_memories(novel: Novel, chapter: Chapter, llm_config: LLMConfig | None) -> list[dict[str, Any]]:
-    """抽取单章结构化记忆；无 API Key 时走摘要级兜底。"""
-    if llm_config is None:
-        return build_fallback_memory(chapter)
-
-    _, parsed = LLMClient(llm_config).complete_json(build_memory_extraction_prompt(novel, chapter))
-    return normalize_memory_items(parsed.get("memories"), chapter.chapter_index)
-
-
-def sync_chapter_memories(
-    db: Session,
-    novel: Novel,
-    chapter: Chapter,
-    llm_config: LLMConfig | None,
-) -> list[MemoryItem]:
-    """同步单章自动记忆：先清理本章旧自动记忆，再写入新抽取结果。"""
-    existing_items = db.scalars(
-        select(MemoryItem).where(
-            MemoryItem.novel_id == novel.id,
-            MemoryItem.chapter_index_start == chapter.chapter_index,
-        )
-    ).all()
-    for item in existing_items:
-        if (item.payload or {}).get("source") in AUTO_MEMORY_SOURCES:
-            db.delete(item)
-
-    records = extract_chapter_memories(novel=novel, chapter=chapter, llm_config=llm_config)
-    memory_items = [MemoryItem(novel_id=novel.id, **record) for record in records]
-    db.add_all(memory_items)
-    db.commit()
-    for item in memory_items:
-        db.refresh(item)
-    return memory_items
 
 
 def purge_chapter_memories(db: Session, novel_id: object, chapter_index: int) -> int:

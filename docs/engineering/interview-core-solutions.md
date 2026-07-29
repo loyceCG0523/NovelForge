@@ -188,7 +188,6 @@ API 创建 generation_tasks
 - `generate_story_event`
 - `continue_story_event`
 - `generate_chapter`
-- `revise_chapter`
 - `check_story_event_quality`
 - `analyze_sample`
 

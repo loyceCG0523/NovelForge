@@ -20,6 +20,8 @@ from app.models.review_issue import ReviewIssue
 from app.models.story_event import StoryEvent
 from app.schemas.chapter import ChapterCreate, ChapterRead, ChapterUpdate
 from app.services.agents.memory_agent import purge_memory_for_chapter
+from app.services.chapter_word_guard import count_chapter_words
+from app.services.paragraph_formatter import format_chapter_paragraphs
 
 
 router = APIRouter(prefix="/api/novels/{novel_id}/chapters", tags=["chapters"])
@@ -154,10 +156,13 @@ def create_chapter(
     if existing_chapter is not None:
         raise HTTPException(status_code=409, detail="Chapter index already exists")
 
+    normalized_content = format_chapter_paragraphs(payload.content)
+    chapter_data = payload.model_dump()
+    chapter_data["content"] = normalized_content
     chapter = Chapter(
         novel_id=novel_id,
-        word_count=len(payload.content),
-        **payload.model_dump(),
+        word_count=count_chapter_words(normalized_content),
+        **chapter_data,
     )
     db.add(chapter)
     novel.current_chapter_index = max(novel.current_chapter_index, payload.chapter_index)
@@ -207,6 +212,8 @@ def update_chapter(
         raise HTTPException(status_code=404, detail="Chapter not found")
 
     update_data = payload.model_dump(exclude_unset=True)
+    if "content" in update_data:
+        update_data["content"] = format_chapter_paragraphs(update_data["content"])
     if "chapter_index" in update_data and update_data["chapter_index"] != chapter.chapter_index:
         existing_chapter = db.scalar(
             select(Chapter).where(
@@ -220,7 +227,7 @@ def update_chapter(
     for key, value in update_data.items():
         setattr(chapter, key, value)
     if "content" in update_data:
-        chapter.word_count = len(update_data["content"] or "")
+        chapter.word_count = count_chapter_words(update_data["content"])
 
     novel.current_chapter_index = max(novel.current_chapter_index, chapter.chapter_index)
     db.commit()

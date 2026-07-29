@@ -61,7 +61,6 @@ python -m worker.main --once
 | `generate_story_event` | `run_event_generation_graph` | 规划并生成一个 6-12 章闭环剧情事件 |
 | `continue_story_event` | `handle_continue_story_event` | 从指定章节计划继续生成 |
 | `generate_chapter` | `handle_generate_chapter` | 生成或重写单章 |
-| `revise_chapter` | `handle_revise_chapter` | 根据 ReviewIssue 自动修订章节 |
 | `check_story_event_quality` | `handle_check_story_event_quality` | 对完整剧情事件做质量审校 |
 | `analyze_sample` | `handle_analyze_sample` | 从 MinIO 流式读取样本，分片抽取指标并聚合报告 |
 
@@ -160,7 +159,7 @@ API 上传文件到 MinIO
 
 - 发现连续性问题后，不要求用户手动处理。
 - 系统自动判断是否可修复。
-- 可修复问题会触发 `revise_chapter` 或内部自动修订。
+- 可修复问题统一由章节流水线生成局部段落补丁。
 - 修订后再次审校。
 - `ReviewIssue.payload.repair_history` 保存自动处理历史。
 - 前端展示问题、状态和修复历史，不把生成过程负担转移给用户。

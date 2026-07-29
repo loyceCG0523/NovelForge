@@ -15,6 +15,7 @@ export function setSession(token, user) {
 export function setStoredUser(user) {
   // 更新偏好后只刷新用户缓存，不改动现有 token。
   localStorage.setItem("novelforge_user", JSON.stringify(user));
+  window.dispatchEvent(new CustomEvent("novelforge:user-updated", { detail: user }));
 }
 
 export function clearSession() {
@@ -23,11 +24,32 @@ export function clearSession() {
   localStorage.removeItem("novelforge_user");
 }
 
+function handleUnauthorized(path, response) {
+  if (response.status !== 401 || typeof window === "undefined") return false;
+  if (path === "/api/auth/login" || path === "/api/auth/register") return false;
+
+  clearSession();
+  sessionStorage.setItem("novelforge_login_notice", "登录状态已失效，请重新登录。");
+  window.location.replace("/login?reason=session_expired");
+  return true;
+}
+
 export function getStoredUser() {
   // 侧边栏用户信息从本地缓存读取，避免每次页面切换都请求 /me。
   if (typeof window === "undefined") return null;
   const raw = localStorage.getItem("novelforge_user");
   return raw ? JSON.parse(raw) : null;
+}
+
+export function buildTimestampedDownloadFilename(title, extension, exportedAt = new Date()) {
+  const pad = (value) => String(value).padStart(2, "0");
+  const safeTitle = String(title || "novel").replace(/[\\/:*?"<>|]/g, "_").trim() || "novel";
+  const timestamp = [
+    exportedAt.getFullYear(),
+    pad(exportedAt.getMonth() + 1),
+    pad(exportedAt.getDate())
+  ].join("") + `_${pad(exportedAt.getHours())}${pad(exportedAt.getMinutes())}`;
+  return `${safeTitle}_${timestamp}.${String(extension || "txt").replace(/^\./, "")}`;
 }
 
 export async function apiFetch(path, options = {}) {
@@ -45,6 +67,9 @@ export async function apiFetch(path, options = {}) {
   });
 
   if (!response.ok) {
+    if (handleUnauthorized(path, response)) {
+      throw new Error("登录状态已失效，正在返回登录页。");
+    }
     let message = `Request failed: ${response.status}`;
     try {
       const error = await response.json();
@@ -80,6 +105,9 @@ export async function apiDownload(path, fallbackFilename = "novelforge-export.tx
   });
 
   if (!response.ok) {
+    if (handleUnauthorized(path, response)) {
+      throw new Error("登录状态已失效，正在返回登录页。");
+    }
     let message = `Request failed: ${response.status}`;
     try {
       const error = await response.json();

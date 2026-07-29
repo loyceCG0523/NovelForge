@@ -1,6 +1,7 @@
 """整本书自动生产接口的数据契约。"""
 
 from uuid import UUID
+from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -8,8 +9,10 @@ from pydantic import BaseModel, ConfigDict, Field
 class AutoNovelRunStart(BaseModel):
     """启动整本书自动生产时可覆盖的运行参数。"""
 
-    chapter_count_per_event: int = Field(default=8, ge=6, le=12)
+    chapter_count_per_event: int | None = Field(default=None, ge=4, le=12)
     max_event_count: int = Field(default=20, ge=1, le=80)
+    production_mode: Literal["auto", "human_in_loop", "tomato_trial", "test_run"] = "auto"
+    test_run_scope: Literal["event", "first_chapter"] = "event"
 
 
 class AutoNovelRunRead(BaseModel):

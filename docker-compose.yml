@@ -15,7 +15,7 @@ services:
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-novelforge} -d ${POSTGRES_DB:-novelforge}"]
       interval: 10s
-      timeout: 5s
+      timeout: 7.5s
       retries: 5
 
   # 本地任务队列；API 把 Agent 任务写入 Redis，Worker 从 Redis 消费。
@@ -30,7 +30,7 @@ services:
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]
       interval: 10s
-      timeout: 5s
+      timeout: 7.5s
       retries: 5
 
   # 本地 S3 兼容对象存储；后续用于保存样本文本、导出文件和大体积素材。
@@ -50,7 +50,7 @@ services:
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/live"]
       interval: 10s
-      timeout: 5s
+      timeout: 7.5s
       retries: 5
 
 volumes:
