@@ -191,6 +191,7 @@ def build_chapter_context(
                 "domain": item.domain,
                 "snippet": item.snippet,
                 "published_at": item.published_at,
+                "research_type": (item.payload or {}).get("research_type", "factual"),
             }
             for item in research_sources
         ],

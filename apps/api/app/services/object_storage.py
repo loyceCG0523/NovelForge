@@ -7,6 +7,7 @@
 from __future__ import annotations
 
 import re
+from io import BytesIO
 from collections.abc import Iterator
 from urllib.parse import urlparse
 
@@ -53,6 +54,36 @@ def upload_fileobj(object_name: str, file_obj, length: int, content_type: str = 
         length=length,
         content_type=content_type or "application/octet-stream",
     )
+
+
+def upload_text(object_name: str, content: str) -> None:
+    """把一个UTF-8文本分段写入现有MinIO。"""
+    payload = content.encode("utf-8")
+    upload_fileobj(
+        object_name=object_name,
+        file_obj=BytesIO(payload),
+        length=len(payload),
+        content_type="text/plain; charset=utf-8",
+    )
+
+
+def read_text_object(object_name: str, max_bytes: int = 2 * 1024 * 1024) -> str:
+    """读取受控的小型文本对象；大文件应先切成分段对象。"""
+    if not object_name:
+        return ""
+    ensure_bucket()
+    client = _build_client()
+    response = client.get_object(settings.s3_bucket, object_name)
+    data = bytearray()
+    try:
+        for chunk in response.stream(64 * 1024):
+            data.extend(chunk)
+            if len(data) > max_bytes:
+                raise ValueError("文本分段超过允许的读取大小")
+    finally:
+        response.close()
+        response.release_conn()
+    return bytes(data).decode("utf-8", errors="ignore")
 
 
 def remove_object(object_name: str) -> None:

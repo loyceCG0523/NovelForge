@@ -25,6 +25,9 @@ class PromptContextTests(unittest.TestCase):
                 ],
             }
         )
+        self.assertEqual(expression_pack["minimum_required"], 1)
+        self.assertTrue(expression_pack["requirement_satisfied"])
+        self.assertIn("至少一条", expression_pack["usage_policy"]["required"])
         story_bible = compact_story_bible(
             {
                 "content": {
@@ -176,6 +179,10 @@ class PromptContextTests(unittest.TestCase):
         self.assertNotIn("连续切成三个及以上的短句", combined_prompt)
         self.assertIn("尽量少用破折号", combined_prompt)
         self.assertIn("不用破折号代替", combined_prompt)
+        self.assertIn("可观察细节", combined_prompt)
+        self.assertIn("听者按性格误读/回避/抓错重点", combined_prompt)
+        self.assertIn("章际接力", combined_prompt)
+        self.assertIn("禁止每个念头机械切成单行", combined_prompt)
 
     def test_chapter_prompt_uses_precalibrated_word_range_override(self):
         context = {
@@ -231,7 +238,7 @@ class PromptContextTests(unittest.TestCase):
             message["content"] for message in build_chapter_prompt(context)
         )
 
-        self.assertIn("2—3个由人物认知差", combined_prompt)
+        self.assertIn("4—6个分散的因果型喜剧节拍", combined_prompt)
         self.assertIn("流程逐项写全", combined_prompt)
         self.assertIn('"tone_pacing_contract"', combined_prompt)
         self.assertEqual(combined_prompt.count('"tone_pacing_contract"'), 1)
@@ -311,6 +318,7 @@ class PromptContextTests(unittest.TestCase):
 
         self.assertIn("雨水敲着铁皮棚", combined_prompt)
         self.assertIn("用声音意象", combined_prompt)
+        self.assertIn("通用短语可以直接使用", combined_prompt)
         self.assertIn("禁止近似改写原句", combined_prompt)
 
 

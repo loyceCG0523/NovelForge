@@ -15,9 +15,10 @@ from app.models.chapter import Chapter
 
 AUTO_REVIEW_SOURCE = "punctuation_style_checker"
 ISSUE_TYPE = "punctuation_fragmentation"
+PAIRING_ISSUE_TYPE = "punctuation_pairing"
 SHORT_SENTENCE_MAX_CHARS = 18
 MIN_FRAGMENT_RUN = 3
-MAX_ISSUES_PER_CHAPTER = 6
+MAX_ISSUES_PER_CHAPTER = 20
 TWO_SENTENCE_FRAGMENT_MAX_CHARS = 14
 FRAGMENT_VERB_MARKERS = (
     "是", "有", "在", "把", "被", "会", "能", "要", "想", "让", "使", "给",
@@ -30,6 +31,26 @@ FRAGMENT_NOUN_MARKERS = (
     "卫生间", "厨房", "客厅", "卧室", "走廊", "电梯", "车里", "口袋",
 )
 ORDINAL_NOUN_PATTERN = re.compile(r"^第[一二三四五六七八九十百千万两\d]+(?:个|间|层|扇|只|张|把|本|位|件|枚).+")
+PAIRED_PUNCTUATION = {
+    "“": "”",
+    "‘": "’",
+    "《": "》",
+    "（": "）",
+    "【": "】",
+}
+CLOSING_TO_OPENING = {closing: opening for opening, closing in PAIRED_PUNCTUATION.items()}
+PUNCTUATION_LABELS = {
+    "“": "左双引号",
+    "”": "右双引号",
+    "‘": "左单引号",
+    "’": "右单引号",
+    "《": "左书名号",
+    "》": "右书名号",
+    "（": "左括号",
+    "）": "右括号",
+    "【": "左方括号",
+    "】": "右方括号",
+}
 
 
 def _meaningful_length(sentence: str) -> int:
@@ -97,10 +118,85 @@ def _extract_two_sentence_fragments(paragraph: str) -> list[list[str]]:
     return pairs
 
 
+def _paired_punctuation_errors(paragraph: str) -> list[str]:
+    """检查成对中文标点的方向、嵌套顺序和闭合状态。"""
+    stack: list[tuple[str, str]] = []
+    errors: list[str] = []
+    for char in paragraph:
+        expected_closing = PAIRED_PUNCTUATION.get(char)
+        if expected_closing:
+            # 同类左引号尚未闭合又再次出现，通常是把右引号写成了左引号。
+            if stack and stack[-1][0] == char:
+                errors.append(
+                    f"{PUNCTUATION_LABELS[char]}重复出现，前一个尚未闭合"
+                )
+            stack.append((char, expected_closing))
+            continue
+        opening = CLOSING_TO_OPENING.get(char)
+        if not opening:
+            continue
+        if not stack:
+            errors.append(f"{PUNCTUATION_LABELS[char]}前缺少{PUNCTUATION_LABELS[opening]}")
+            continue
+        stacked_opening, stacked_closing = stack[-1]
+        if stacked_closing == char:
+            stack.pop()
+            continue
+        errors.append(
+            f"{PUNCTUATION_LABELS[char]}与当前未闭合的"
+            f"{PUNCTUATION_LABELS[stacked_opening]}不匹配"
+        )
+    for opening, _closing in reversed(stack):
+        errors.append(f"{PUNCTUATION_LABELS[opening]}缺少对应右侧标点")
+    return list(dict.fromkeys(errors))
+
+
 def check_punctuation_style(chapter: Chapter) -> list[dict[str, Any]]:
-    """检查章节中明显的机械句号切分。"""
+    """检查成对标点错误和明显的机械句号切分。"""
     records: list[dict[str, Any]] = []
     paragraphs = [item.strip() for item in re.split(r"\r?\n+", chapter.content or "") if item.strip()]
+    pairing_findings: list[dict[str, Any]] = []
+    for paragraph_index, paragraph in enumerate(paragraphs, start=1):
+        errors = _paired_punctuation_errors(paragraph)
+        if not errors:
+            continue
+        pairing_findings.append(
+            {
+                "paragraph_index": paragraph_index,
+                "errors": errors,
+                "evidence": paragraph[:240],
+            }
+        )
+    if pairing_findings:
+        paragraph_indexes = [item["paragraph_index"] for item in pairing_findings]
+        preview_indexes = "、".join(str(index) for index in paragraph_indexes[:8])
+        if len(paragraph_indexes) > 8:
+            preview_indexes += "等"
+        records.append(
+            {
+                "issue_type": PAIRING_ISSUE_TYPE,
+                "severity": "high",
+                "message": (
+                    f"第 {preview_indexes} 段存在成对标点错误，"
+                    f"共涉及 {len(paragraph_indexes)} 段；包含引号方向颠倒、"
+                    "缺少对应标点或闭合顺序错误。"
+                ),
+                "payload": {
+                    "source": AUTO_REVIEW_SOURCE,
+                    "auto_generated": True,
+                    "evidence": "\n".join(
+                        f"第 {item['paragraph_index']} 段：{item['evidence']}"
+                        for item in pairing_findings[:5]
+                    ),
+                    "expected": "中文双引号、单引号、书名号和括号必须方向正确、成对出现，并按正确顺序闭合。",
+                    "suggestion": "只修正错误标点的方向或缺失项，保留原段全部文字、语气和信息。",
+                    "rule": "paired_punctuation_balance",
+                    "paragraph_index": paragraph_indexes[0],
+                    "paragraph_indexes": paragraph_indexes,
+                    "findings": pairing_findings,
+                },
+            }
+        )
     for paragraph_index, paragraph in enumerate(paragraphs, start=1):
         for sentence_run in _extract_short_sentence_runs(paragraph):
             evidence = "".join(sentence_run)

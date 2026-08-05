@@ -177,7 +177,6 @@ function ChaptersContent() {
   return (
     <AppShell
       title="章节管理"
-      subtitle="维护章节列表、正文草稿、摘要和上下文快照"
       actions={
         <>
           <select className="secondary-button" value={selectedNovelId} onChange={(event) => setSelectedNovelId(event.target.value)}>
@@ -227,7 +226,7 @@ function ChaptersContent() {
 
             <form className={`panel chapter-editor ${contentExpanded ? "content-expanded" : ""} ${contextExpanded ? "context-expanded" : ""}`} onSubmit={saveChapter}>
               <div className="panel-header">
-                <div><div className="panel-title">{selectedChapterId ? "编辑章节" : "新建章节"}</div><div className="panel-subtitle">后续 Agent 生成的草稿也会回写到这里。</div></div>
+                <div><div className="panel-title">{selectedChapterId ? "编辑章节" : "新建章节"}</div></div>
                 <div className="inline-actions">
                   {selectedChapterId ? <button type="button" className="danger-button" onClick={() => setPendingDeleteChapter(selectedChapter)}>删除</button> : null}
                   <button className="primary-button">保存章节</button>
@@ -259,7 +258,6 @@ function ChaptersContent() {
                   <div className="collapse-head">
                     <div>
                       <div className="panel-title">正文草稿</div>
-                      <div className="panel-subtitle">完整正文默认收起，适合在章节画布中阅读。</div>
                     </div>
                     <div className="inline-actions">
                       <span className="tag">{(draft.content || "").length.toLocaleString()} 字符</span>
@@ -284,7 +282,6 @@ function ChaptersContent() {
                   <div className="collapse-head">
                     <div>
                       <div className="panel-title">上下文快照</div>
-                      <div className="panel-subtitle">Worker 生成本章时使用的 ChapterContext，会随章节一起保存。</div>
                     </div>
                     <button type="button" className="ghost-button" onClick={() => setContextExpanded((value) => !value)}>
                       {contextExpanded ? "收起快照" : "展开快照"}
@@ -311,7 +308,6 @@ function ChaptersContent() {
           {selectedChapterId ? (
             <ReviewIssuePanel
               title="本章审校记录"
-              subtitle="当前章节关联的连续性、风格和自动修复记录。"
               issues={chapterIssues}
               emptyTitle="本章暂无审校记录"
               emptyDescription="章节生成后的系统审校结果会显示在这里。"

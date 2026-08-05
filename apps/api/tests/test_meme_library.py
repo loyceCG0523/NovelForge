@@ -1,17 +1,19 @@
 """热梗库导入与最终采用记录。"""
 
+import io
 import unittest
 from types import SimpleNamespace
 from unittest.mock import patch
 
+from app.api.meme_library import can_manage_meme_entry
 from app.services.llm_client import LLMConfig
 from app.services.meme_library import (
     MEME_LIBRARY_HEADERS,
+    build_meme_library_workbook,
     build_meme_retrieval_text,
     meme_embedding_model_key,
     normalize_manual_meme_entry,
     parse_meme_library_file,
-    parse_popularity_years,
 )
 from app.services.meme_rag import (
     MAX_MEME_RERANK_CANDIDATES,
@@ -32,22 +34,56 @@ from app.services.meme_usage_enforcer import (
 
 
 class MemeLibraryTests(unittest.TestCase):
+    def test_export_workbook_contains_all_import_fields(self) -> None:
+        from openpyxl import load_workbook
+
+        entries = [
+            SimpleNamespace(
+                phrase="邪修",
+                meaning="不按常规但意外高效的做法",
+                suitable_scenes="熟人轻松调侃",
+            ),
+            SimpleNamespace(
+                phrase="预制××",
+                meaning="批量套模板的事物",
+                suitable_scenes="吐槽缺少个性",
+            ),
+        ]
+
+        content = build_meme_library_workbook(entries)
+        workbook = load_workbook(io.BytesIO(content), read_only=True, data_only=True)
+        rows = list(workbook.active.iter_rows(values_only=True))
+
+        self.assertEqual(rows[0], MEME_LIBRARY_HEADERS)
+        self.assertEqual(len(rows), 3)
+        self.assertEqual(rows[1][0], "邪修")
+        self.assertEqual(rows[1][2], "熟人轻松调侃")
+
+    def test_builtin_entries_are_manageable_but_user_entries_remain_private(self) -> None:
+        current_user_id = "00000000-0000-0000-0000-000000000001"
+        builtin = SimpleNamespace(namespace="builtin", owner_id=None)
+        own_entry = SimpleNamespace(namespace=f"user:{current_user_id}", owner_id=current_user_id)
+        other_entry = SimpleNamespace(
+            namespace="user:00000000-0000-0000-0000-000000000002",
+            owner_id="00000000-0000-0000-0000-000000000002",
+        )
+
+        self.assertTrue(can_manage_meme_entry(builtin, current_user_id))
+        self.assertTrue(can_manage_meme_entry(own_entry, current_user_id))
+        self.assertFalse(can_manage_meme_entry(other_entry, current_user_id))
+
     def test_embedding_text_only_uses_three_semantic_fit_fields(self) -> None:
         retrieval_text = build_meme_retrieval_text(
             {
                 "phrase": "邪修",
                 "meaning": "不按常规但意外高效的做法",
-                "origin_event": "不应参与语义匹配的来源故事",
                 "suitable_scenes": "熟人轻松调侃一种省事办法",
-                "popularity_period": "不应参与语义匹配的流行时间",
             }
         )
 
         self.assertIn("邪修", retrieval_text)
         self.assertIn("意外高效", retrieval_text)
         self.assertIn("熟人轻松调侃", retrieval_text)
-        self.assertNotIn("来源故事", retrieval_text)
-        self.assertNotIn("流行时间", retrieval_text)
         self.assertTrue(meme_embedding_model_key("qwen-test").endswith("::meme-fit-v2"))
 
     def test_chapter_query_uses_only_active_character_profiles(self) -> None:
@@ -155,7 +191,7 @@ class MemeLibraryTests(unittest.TestCase):
             ["邪修"],
         )
 
-    def test_meme_recall_uses_permissive_vector_floor(self) -> None:
+    def test_meme_recall_uses_conservative_vector_floor(self) -> None:
         self.assertTrue(
             meets_meme_relevance_threshold(
                 vector_similarity=MIN_MEME_VECTOR_SIMILARITY,
@@ -166,71 +202,44 @@ class MemeLibraryTests(unittest.TestCase):
                 vector_similarity=MIN_MEME_VECTOR_SIMILARITY - 0.001,
             )
         )
-        self.assertEqual(MIN_MEME_VECTOR_SIMILARITY, 0.30)
+        self.assertEqual(MIN_MEME_VECTOR_SIMILARITY, 0.40)
         self.assertEqual(MAX_MEME_RERANK_CANDIDATES, 12)
 
-    def test_imports_six_column_utf8_csv(self) -> None:
+    def test_imports_three_column_utf8_csv(self) -> None:
         csv_text = (
             ",".join(MEME_LIBRARY_HEADERS)
             + "\n"
-            + "示例表达,准确含义,来源事件,朋友之间轻松调侃,2025-11~2026-01,https://example.com/source\n"
+            + "示例表达,准确含义,朋友之间轻松调侃\n"
         )
         entries, errors = parse_meme_library_file("memes.csv", csv_text.encode("utf-8"))
 
         self.assertEqual(errors, [])
         self.assertEqual(entries[0]["phrase"], "示例表达")
-        self.assertEqual(entries[0]["popularity_year_start"], 2025)
-        self.assertEqual(entries[0]["popularity_year_end"], 2026)
         self.assertIn("适用人物关系", entries[0]["retrieval_text"])
 
     def test_rejects_incomplete_rows(self) -> None:
         csv_text = (
             ",".join(MEME_LIBRARY_HEADERS)
             + "\n"
-            + "示例表达,准确含义,,朋友之间轻松调侃,2026-01,https://example.com/source\n"
+            + "示例表达,准确含义,\n"
         )
         entries, errors = parse_meme_library_file("memes.csv", csv_text.encode("utf-8"))
 
         self.assertEqual(entries, [])
-        self.assertIn("出处事件", errors[0])
-
-    def test_popularity_year_parser_accepts_month_range(self) -> None:
-        self.assertEqual(parse_popularity_years("2025-11~2026-01"), (2025, 2026))
+        self.assertIn("适用场景", errors[0])
 
     def test_manual_entry_uses_same_validation_and_index_fields_as_import(self) -> None:
         entry = normalize_manual_meme_entry(
             {
                 "phrase": "邪修",
                 "meaning": "不按常规但意外高效的做法",
-                "origin_event": "网友评价非常规做法",
                 "suitable_scenes": "熟人轻松调侃对方的省事办法",
-                "popularity_period": "2025-11~2026-01",
-                "source_urls": [
-                    "https://example.com/one",
-                    "https://example.com/two",
-                ],
             }
         )
 
         self.assertEqual(entry["normalized_phrase"], "邪修")
-        self.assertEqual(entry["popularity_year_start"], 2025)
-        self.assertEqual(entry["popularity_year_end"], 2026)
-        self.assertEqual(len(entry["source_urls"]), 2)
         self.assertIn("熟人轻松调侃", entry["retrieval_text"])
         self.assertEqual(len(entry["content_hash"]), 64)
-
-    def test_manual_entry_rejects_invalid_source_url(self) -> None:
-        with self.assertRaisesRegex(ValueError, "必须以 http"):
-            normalize_manual_meme_entry(
-                {
-                    "phrase": "邪修",
-                    "meaning": "不按常规但意外高效的做法",
-                    "origin_event": "网友评价非常规做法",
-                    "suitable_scenes": "熟人轻松调侃",
-                    "popularity_period": "2026",
-                    "source_urls": ["example.com/no-scheme"],
-                }
-            )
 
     def test_final_usage_only_keeps_phrases_present_after_review(self) -> None:
         pack = {
@@ -302,7 +311,7 @@ class MemeLibraryTests(unittest.TestCase):
         self.assertEqual(result["usage"]["adopted_count"], 1)
         mocked_complete.assert_not_called()
 
-    def test_enforcer_applies_one_minimal_paragraph_patch(self) -> None:
+    def test_enforcer_never_injects_a_meme_after_drafting(self) -> None:
         pack = {
             "references": [
                 {
@@ -314,20 +323,9 @@ class MemeLibraryTests(unittest.TestCase):
                 },
             ]
         }
-        response = {
-            "candidate_phrase": "邪修",
-            "rendered_phrase": "生活邪修",
-            "speaker": "林安",
-            "scene_anchor": "看到省事做饭方法时",
-            "paragraph_index": 1,
-            "new_text": "林安看着她把鸡蛋直接磕进饭盒，忍不住笑：“你这算生活邪修。”",
-            "reason": "熟人用玩笑评价省事做饭方法",
-        }
-
         with patch(
-            "app.services.meme_usage_enforcer.LLMClient.complete_json",
-            return_value=("{}", response),
-        ):
+            "app.services.meme_usage_enforcer.LLMClient.complete_json"
+        ) as mocked_complete:
             result = ensure_minimum_meme_usage(
                 content="林安看着她把鸡蛋直接磕进饭盒，忍不住笑了。\n\n她认真记下火候。",
                 reference_pack=pack,
@@ -343,13 +341,10 @@ class MemeLibraryTests(unittest.TestCase):
                 ),
             )
 
-        self.assertEqual(result["status"], "injected")
-        self.assertEqual(result["usage"]["adopted_count"], 1)
-        self.assertIn("生活邪修", result["content"])
-        self.assertEqual(
-            result["chapter_progress"]["meme_usage_plan"][0]["decision"],
-            "use",
-        )
+        self.assertEqual(result["status"], "optional_skipped")
+        self.assertEqual(result["usage"]["adopted_count"], 0)
+        self.assertNotIn("邪修", result["content"])
+        mocked_complete.assert_not_called()
 
     def test_enforcer_does_not_force_an_inapplicable_candidate(self) -> None:
         pack = {
@@ -370,15 +365,9 @@ class MemeLibraryTests(unittest.TestCase):
                 }
             ]
         }
-        response = {
-            "applicable": False,
-            "reason": "现有段落没有熟人互动，也不能在单段内补足",
-        }
-
         with patch(
-            "app.services.meme_usage_enforcer.LLMClient.complete_json",
-            return_value=("{}", response),
-        ):
+            "app.services.meme_usage_enforcer.LLMClient.complete_json"
+        ) as mocked_complete:
             result = ensure_minimum_meme_usage(
                 content="他独自在空房间里查完资料，关灯离开。",
                 reference_pack=pack,
@@ -390,8 +379,9 @@ class MemeLibraryTests(unittest.TestCase):
                 ),
             )
 
-        self.assertEqual(result["status"], "failed")
+        self.assertEqual(result["status"], "optional_skipped")
         self.assertEqual(result["content"], "他独自在空房间里查完资料，关灯离开。")
+        mocked_complete.assert_not_called()
 
     def test_repeated_template_meme_is_repaired_with_one_local_patch(self) -> None:
         content = (

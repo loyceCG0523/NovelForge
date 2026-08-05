@@ -30,7 +30,7 @@ def ensure_minimum_meme_usage(
     chapter_progress: dict[str, Any] | None,
     llm_config: LLMConfig | None,
 ) -> dict[str, Any]:
-    """必要时用一次最小段落补丁落实已规划的热梗微场景。"""
+    """记录自然采用结果；没有合适落点时允许零使用且绝不事后硬塞。"""
     references = [
         item
         for item in ((reference_pack or {}).get("references") or [])[:MAX_CANDIDATES]
@@ -42,67 +42,12 @@ def ensure_minimum_meme_usage(
         return _result("not_required", content, progress, usage)
     if usage["adopted_count"] >= 1:
         return _result("already_satisfied", content, progress, usage)
-    if llm_config is None:
-        return _result(
-            "failed",
-            content,
-            progress,
-            usage,
-            reason="正文模型未配置，无法执行热梗自然落地补丁",
-        )
-
-    paragraphs = _split_paragraphs(content)
-    if not paragraphs:
-        return _result("failed", content, progress, usage, reason="章节正文为空")
-
-    errors: list[str] = []
-    client = LLMClient(llm_config)
-    for attempt in range(1, MAX_PATCH_ATTEMPTS + 1):
-        try:
-            _, parsed = client.complete_json(
-                _build_patch_messages(
-                    paragraphs=paragraphs,
-                    references=references,
-                    previous_errors=errors,
-                ),
-                max_tokens=1200,
-                temperature=0.35,
-            )
-            patch = _validate_patch(parsed, paragraphs, references)
-        except Exception as exc:
-            errors.append(str(exc))
-            continue
-
-        revised_paragraphs = list(paragraphs)
-        revised_paragraphs[patch["paragraph_index"] - 1] = patch["new_text"]
-        revised_content = format_chapter_paragraphs("\n\n".join(revised_paragraphs))
-        revised_progress = _mark_phrase_used(progress, patch)
-        revised_usage = build_final_meme_usage(
-            reference_pack,
-            revised_progress,
-            revised_content,
-        )
-        if revised_usage["adopted_count"] < 1:
-            errors.append("补丁应用后仍未检测到候选热梗")
-            continue
-        return _result(
-            "injected",
-            revised_content,
-            revised_progress,
-            revised_usage,
-            attempt=attempt,
-            phrase=patch["candidate_phrase"],
-            paragraph_index=patch["paragraph_index"],
-            reason=patch["reason"],
-        )
-
     return _result(
-        "failed",
+        "optional_skipped",
         content,
         progress,
         usage,
-        attempt=MAX_PATCH_ATTEMPTS,
-        reason="；".join(errors[-2:]) or "正文模型未返回有效热梗补丁",
+        reason="候选没有在原生剧情和人物口吻中自然成立，已按准确性优先跳过",
     )
 
 
@@ -201,7 +146,6 @@ def repair_repeated_meme_usage(
                         ),
                     },
                 ],
-                max_tokens=1800,
                 temperature=0.15,
             )
             patches = parsed.get("patches") or []

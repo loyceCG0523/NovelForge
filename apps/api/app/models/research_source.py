@@ -11,7 +11,7 @@ from app.models.mixins import IdMixin, TimestampMixin
 
 
 class ResearchSource(IdMixin, TimestampMixin, Base):
-    """保存一次 Tavily 检索返回的、可追溯的来源摘要。"""
+    """保存一次网络检索返回的、可追溯的来源摘要。"""
 
     __tablename__ = "research_sources"
 

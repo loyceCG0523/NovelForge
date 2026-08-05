@@ -30,7 +30,6 @@ const statusLabels = {
 
 export default function ReviewIssuePanel({
   title = "系统审校记录",
-  subtitle = "系统自动审校、修复和记录生成过程中的质量事项。",
   issues = [],
   emptyTitle = "暂无审校记录",
   emptyDescription = "生成后的连续性审校、质量建议和自动修复历史会出现在这里。",
@@ -46,7 +45,6 @@ export default function ReviewIssuePanel({
       <div className="panel-header">
         <div>
           <div className="panel-title">{title}</div>
-          <div className="panel-subtitle">{subtitle}</div>
         </div>
         <span className="tag red">{issues.length}</span>
       </div>

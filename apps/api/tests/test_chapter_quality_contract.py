@@ -22,7 +22,16 @@ class ChapterQualityContractTests(unittest.TestCase):
         self.assertIn("手续、费用、登记、采购、通勤、清单和规则不得逐项展开", text)
         self.assertIn("环境描写是否过量", str(build_review_quality_contract(1)))
         self.assertIn("算法、变量或数学题", text)
+        self.assertIn("固定口癖、感情比喻或连续笑点", text)
+        self.assertIn("至少形成4个分散的因果型喜剧节拍", text)
+        self.assertIn("语气词、停顿、改口、打断", text)
+        self.assertIn("前10%必须发生具体扰动", text)
         self.assertIn("具体的未完成动作、新信息、危险、选择或关系变化", text)
+        self.assertIn("即时目标、阻力、策略、反制和局部变化", text)
+        self.assertIn("答非所问、错位联想、一本正经跑偏", text)
+        self.assertIn("不同说话节奏、回避习惯与情绪泄漏方式", text)
+        self.assertIn("storytelling_craft", contract)
+        self.assertIn("下一章第一拍", text)
         self.assertTrue(contract["first_chapter_extra"])
 
     def test_later_chapter_does_not_receive_first_chapter_only_rules(self) -> None:
@@ -36,6 +45,8 @@ class ChapterQualityContractTests(unittest.TestCase):
         self.assertIn("ending_hook", CHAPTER_REVIEW_ISSUE_TYPES)
         self.assertIn("detail_relevance", CHAPTER_REVIEW_ISSUE_TYPES)
         self.assertIn("viewpoint_knowledge", CHAPTER_REVIEW_ISSUE_TYPES)
+        self.assertIn("supporting_element_dominance", CHAPTER_REVIEW_ISSUE_TYPES)
+        self.assertIn("genre_delivery", CHAPTER_REVIEW_ISSUE_TYPES)
 
 
 if __name__ == "__main__":

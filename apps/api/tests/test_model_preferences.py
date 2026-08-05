@@ -5,10 +5,14 @@ import unittest
 from app.api.users import merge_preferences
 from app.schemas.user import mask_api_key, sanitize_preferences
 from app.services.llm_client import (
+    DEFAULT_MODEL_CONTEXT_WINDOW_TOKENS,
     DEFAULT_REVIEW_TEMPERATURE,
+    LLMConfig,
+    build_context_token_budget,
     build_llm_config,
     build_review_llm_config,
     build_test_llm_config,
+    is_official_deepseek_v4_flash,
 )
 from app.services.embedding_client import (
     build_embedding_config,
@@ -38,10 +42,56 @@ class ModelPreferenceTests(unittest.TestCase):
         self.assertEqual(reviewer.api_key, writer.api_key)
         self.assertEqual(reviewer.model, writer.model)
         self.assertEqual(reviewer.temperature, DEFAULT_REVIEW_TEMPERATURE)
-        self.assertEqual(writer.timeout_seconds, 135.0)
-        self.assertEqual(writer.total_timeout_seconds, 900.0)
-        self.assertEqual(reviewer.timeout_seconds, 135.0)
-        self.assertEqual(reviewer.total_timeout_seconds, 900.0)
+        self.assertEqual(writer.timeout_seconds, 60.0)
+        self.assertIsNone(writer.total_timeout_seconds)
+        self.assertEqual(reviewer.timeout_seconds, 60.0)
+        self.assertIsNone(reviewer.total_timeout_seconds)
+        self.assertEqual(writer.context_window_tokens, DEFAULT_MODEL_CONTEXT_WINDOW_TOKENS)
+        self.assertEqual(reviewer.context_window_tokens, DEFAULT_MODEL_CONTEXT_WINDOW_TOKENS)
+
+    def test_writer_and_reviewer_keep_independent_context_windows(self) -> None:
+        preferences = {
+            "llm": {
+                **self.preferences["llm"],
+                "context_window_tokens": 131072,
+            },
+            "review_llm": {
+                "enabled": True,
+                "base_url": "https://reviewer.example/v1",
+                "api_key": "reviewer-secret",
+                "model": "reviewer-model",
+                "context_window_tokens": 200000,
+            },
+        }
+
+        self.assertEqual(build_llm_config(preferences).context_window_tokens, 131072)
+        self.assertEqual(build_review_llm_config(preferences).context_window_tokens, 200000)
+
+    def test_context_budget_reports_input_overflow_without_creating_output_limit(self) -> None:
+        config = LLMConfig(
+            base_url="https://example.invalid",
+            api_key="test",
+            model="test",
+            context_window_tokens=4096,
+        )
+        budget = build_context_token_budget(
+            config,
+            [{"role": "user", "content": "short prompt"}],
+        )
+
+        self.assertLessEqual(
+            budget["estimated_input_tokens"]
+            + budget["remaining_context_tokens"]
+            + budget["context_safety_reserve_tokens"],
+            budget["context_window_tokens"],
+        )
+
+        overflow = build_context_token_budget(
+            config,
+            [{"role": "user", "content": "长" * 2000}],
+        )
+        self.assertGreater(overflow["context_overflow_tokens"], 0)
+        self.assertEqual(overflow["remaining_context_tokens"], 0)
 
     def test_independent_review_model_uses_its_own_api(self) -> None:
         preferences = {
@@ -60,8 +110,8 @@ class ModelPreferenceTests(unittest.TestCase):
         self.assertEqual(reviewer.base_url, "https://reviewer.example/v1")
         self.assertEqual(reviewer.api_key, "reviewer-secret")
         self.assertEqual(reviewer.model, "reviewer-model")
-        self.assertEqual(reviewer.timeout_seconds, 300.0)
-        self.assertEqual(reviewer.total_timeout_seconds, 2700.0)
+        self.assertEqual(reviewer.timeout_seconds, 60.0)
+        self.assertIsNone(reviewer.total_timeout_seconds)
 
     def test_official_deepseek_v4_pro_omits_ignored_temperature(self) -> None:
         preferences = {
@@ -78,6 +128,44 @@ class ModelPreferenceTests(unittest.TestCase):
 
         self.assertIsNotNone(reviewer)
         self.assertIsNone(reviewer.temperature)
+
+    def test_official_deepseek_v4_flash_uses_low_reasoning(self) -> None:
+        preferences = {
+            "llm": {
+                "base_url": "https://api.deepseek.com/",
+                "api_key": "deepseek-secret",
+                "model": "deepseek-v4-flash",
+            }
+        }
+
+        writer = build_llm_config(preferences)
+        reviewer = build_review_llm_config(preferences)
+
+        self.assertIsNotNone(writer)
+        self.assertIsNotNone(reviewer)
+        self.assertIsNone(writer.temperature)
+        self.assertEqual(writer.reasoning_effort, "low")
+        self.assertEqual(reviewer.reasoning_effort, "low")
+
+    def test_deepseek_flash_adapter_only_matches_official_root_url(self) -> None:
+        self.assertTrue(
+            is_official_deepseek_v4_flash(
+                "https://api.deepseek.com",
+                "deepseek-v4-flash",
+            )
+        )
+        self.assertFalse(
+            is_official_deepseek_v4_flash(
+                "https://api.deepseek.com/v1",
+                "deepseek-v4-flash",
+            )
+        )
+        self.assertFalse(
+            is_official_deepseek_v4_flash(
+                "https://api.deepseek.com",
+                "deepseek-v4-pro",
+            )
+        )
 
     def test_enabled_review_model_requires_its_own_key(self) -> None:
         preferences = {**self.preferences, "review_llm": {"enabled": True}}
@@ -120,6 +208,7 @@ class ModelPreferenceTests(unittest.TestCase):
         self.assertEqual(config.timeout_seconds, 30.0)
         self.assertEqual(config.total_timeout_seconds, 37.5)
         self.assertEqual(config.max_retries, 0)
+        self.assertEqual(config.context_window_tokens, DEFAULT_MODEL_CONTEXT_WINDOW_TOKENS)
 
     def test_reviewer_connection_test_does_not_fall_back_to_writer_secret(self) -> None:
         with self.assertRaisesRegex(ValueError, "API Key"):

@@ -1,4 +1,4 @@
-"""SampleAnalysisAgent：把优秀小说样本转成可迁移的风格工程特征。
+"""SampleAnalysisAgent：只生成样本的三项总体分析。
 
 样本可能达到百万字级别，因此这里采用 map-reduce 思路：
 先对每个文本分片计算局部工程指标，再把局部指标聚合成全书级风格向量。
@@ -15,7 +15,7 @@ from typing import Any
 from app.services.llm_client import LLMClient, LLMConfig
 
 AGENT_NAME = "SampleAnalysisAgent"
-SAMPLE_ANALYSIS_SCHEMA_VERSION = "sample_analysis.v4"
+SAMPLE_ANALYSIS_SCHEMA_VERSION = "sample_analysis.v5"
 CHUNK_TARGET_CHARS = 8000
 
 SENSORY_LEXICON = {
@@ -50,6 +50,8 @@ def analyze_sample_chunks(
 ) -> dict[str, Any]:
     """分析文本分片并聚合为全书报告。"""
     chunk_reports = []
+    opening_samples: list[str] = []
+    trailing_samples: list[str] = []
     for index, chunk in enumerate(chunks, start=1):
         normalized = _normalize_text(chunk)
         if len(normalized) < 40:
@@ -61,6 +63,11 @@ def analyze_sample_chunks(
             chunk_index=index,
         )
         chunk_reports.append(chunk_report)
+        excerpt = normalized[:1200]
+        if len(opening_samples) < 3:
+            opening_samples.append(excerpt)
+        else:
+            trailing_samples = [*trailing_samples[-2:], excerpt]
         if progress_callback:
             progress_callback(len(chunk_reports), chunk_report)
 
@@ -68,16 +75,20 @@ def analyze_sample_chunks(
         raise ValueError("样本文本为空或无法解码")
 
     report = _aggregate_chunk_reports(sample_title, source_genre, chunk_reports)
-    strategy = _build_llm_style_strategy(report, llm_config)
+    strategy = _build_llm_style_strategy(
+        report,
+        llm_config,
+        [*opening_samples, *trailing_samples],
+    )
     return _compact_sample_report(report, strategy)
 
 
 def summarize_sample_report(report: dict[str, Any]) -> str:
     """生成一行产品界面可读摘要。"""
     profile = report.get("reference_profile") or {}
-    if profile.get("available") and profile.get("summary"):
-        return str(profile["summary"])[:180]
-    return "样本已完成切片，生成时将通过双通道 RAG 按需检索情节窗口和语言片段。"
+    if profile.get("available") and profile.get("overall_evaluation"):
+        return str(profile["overall_evaluation"])[:180]
+    return "原文已完成章节化；总体分析暂不可用，可稍后重新分析。"
 
 
 def _compact_sample_report(
@@ -161,16 +172,20 @@ def _aggregate_chunk_reports(sample_title: str, source_genre: str, reports: list
     return report
 
 
-def _build_llm_style_strategy(report: dict[str, Any], llm_config: LLMConfig | None) -> dict[str, Any]:
-    """把少量诊断指标压成短规则；真正的情节和语言参考由 RAG 提供。"""
+def _build_llm_style_strategy(
+    report: dict[str, Any],
+    llm_config: LLMConfig | None,
+    representative_samples: list[str],
+) -> dict[str, Any]:
+    """模型只做总体评价、语言原则和错误归纳，不自动挑选精彩片段。"""
     if llm_config is None:
         return {
             "available": False,
             "reason": "未配置 LLM API Key，仅保存量化分析结果。",
             "model": "",
-            "summary": "",
-            "language_rules": [],
-            "anti_ai_rules": [],
+            "overall_evaluation": "",
+            "language_principles": [],
+            "avoid_errors": [],
         }
 
     payload = _build_llm_strategy_payload(report)
@@ -178,19 +193,21 @@ def _build_llm_style_strategy(report: dict[str, Any], llm_config: LLMConfig | No
         {
             "role": "system",
             "content": (
-                "你是长篇网文风格分析工程师。你只能根据输入的结构化量化指标生成可迁移策略，"
-                "不要复述、续写、模仿或复制样本原文。输出必须是严格 JSON。"
+                "你是中文网络小说样本评估员。你只允许输出总体评价、语言表达原则、应避免的错误。"
+                "不要挑选精彩句子，不要输出剧情卡、话术卡、仿写内容或原文摘录。输出必须是严格JSON。"
             ),
         },
         {
             "role": "user",
             "content": (
-                "请把以下少量诊断指标压缩成可直接执行的语言参考规则。"
-                "重点是人物话术的生活感、潜台词、伴随动作和具体叙述；不要输出剧情、节奏、伏笔、句长目标，"
-                "不要包含任何样本文本内容。\n\n"
+                "请结合诊断指标与少量代表性文本，给出克制、可执行的总体分析。"
+                "总体评价说明作品最鲜明的表达优势和局限；语言表达原则关注人物声音、潜台词、"
+                "口语感、叙述衔接与节奏；应避免的错误必须指出机械、割裂、解释过度等风险。"
+                "不要摘录或复述原句。\n\n"
                 f"{json.dumps(payload, ensure_ascii=False)}\n\n"
-                "JSON 字段：summary、language_rules、anti_ai_rules。"
-                "language_rules 最多 4 条，anti_ai_rules 最多 3 条；每条必须具体、短小、可执行。"
+                f"代表性文本：{json.dumps(representative_samples, ensure_ascii=False)}\n\n"
+                "JSON字段：overall_evaluation、language_principles、avoid_errors。"
+                "language_principles和avoid_errors各最多6条；每条必须具体、短小、可执行。"
             ),
         },
     ]
@@ -201,18 +218,20 @@ def _build_llm_style_strategy(report: dict[str, Any], llm_config: LLMConfig | No
             "available": False,
             "reason": f"LLM 风格策略生成失败：{exc}",
             "model": llm_config.model,
-            "summary": "",
-            "language_rules": [],
-            "anti_ai_rules": [],
+            "overall_evaluation": "",
+            "language_principles": [],
+            "avoid_errors": [],
         }
 
     return {
         "available": True,
         "reason": "",
         "model": llm_config.model,
-        "summary": str(parsed.get("summary") or "").strip()[:180],
-        "language_rules": _normalize_string_list(parsed.get("language_rules"), limit=4),
-        "anti_ai_rules": _normalize_string_list(parsed.get("anti_ai_rules"), limit=3),
+        "overall_evaluation": str(parsed.get("overall_evaluation") or "").strip()[:1000],
+        "language_principles": _normalize_string_list(
+            parsed.get("language_principles"), limit=6
+        ),
+        "avoid_errors": _normalize_string_list(parsed.get("avoid_errors"), limit=6),
     }
 
 

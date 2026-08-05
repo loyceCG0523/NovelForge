@@ -158,6 +158,15 @@ class SampleExperienceBuilderTests(unittest.TestCase):
             complete_json.call_count,
             document["part_count"] + 1,
         )
+        first_prompt = "\n".join(
+            message["content"]
+            for message in complete_json.call_args_list[0].args[0]
+        )
+        self.assertIn("dialogue_reaction_chain", first_prompt)
+        self.assertIn("chapter_ending_handoff", first_prompt)
+        self.assertIn("刺激、人物化理解/回避、可见反应", first_prompt)
+        self.assertIn("身份自抬后被字面降格", first_prompt)
+        self.assertIn("亮点条目低于88分不要保留", first_prompt)
 
 
 if __name__ == "__main__":

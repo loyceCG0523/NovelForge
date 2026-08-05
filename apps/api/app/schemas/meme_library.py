@@ -11,10 +11,7 @@ class MemeEntryRead(BaseModel):
     source_type: str
     phrase: str
     meaning: str
-    origin_event: str
     suitable_scenes: str
-    popularity_period: str
-    source_urls: list[str]
     enabled: bool
     review_status: str
     embedding_model: str
@@ -27,20 +24,14 @@ class MemeEntryRead(BaseModel):
 class MemeEntryCreate(BaseModel):
     phrase: str = Field(min_length=1, max_length=120)
     meaning: str = Field(min_length=1, max_length=1000)
-    origin_event: str = Field(min_length=1, max_length=1600)
     suitable_scenes: str = Field(min_length=1, max_length=1200)
-    popularity_period: str = Field(min_length=1, max_length=80)
-    source_urls: list[str] = Field(min_length=1, max_length=5)
     enabled: bool = True
 
 
 class MemeEntryUpdate(BaseModel):
     phrase: str | None = Field(default=None, min_length=1, max_length=120)
     meaning: str | None = Field(default=None, min_length=1, max_length=1000)
-    origin_event: str | None = Field(default=None, min_length=1, max_length=1600)
     suitable_scenes: str | None = Field(default=None, min_length=1, max_length=1200)
-    popularity_period: str | None = Field(default=None, min_length=1, max_length=80)
-    source_urls: list[str] | None = Field(default=None, min_length=1, max_length=5)
     enabled: bool | None = None
 
 

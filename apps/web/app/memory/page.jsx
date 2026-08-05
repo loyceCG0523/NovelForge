@@ -138,7 +138,6 @@ function MemoryContent() {
   return (
     <AppShell
       title="结构化记忆"
-      subtitle="查看章节生成后自动同步的人物、地点、事件和设定事实"
       actions={
         <>
           <select className="secondary-button" value={selectedId} onChange={(event) => setSelectedId(event.target.value)}>

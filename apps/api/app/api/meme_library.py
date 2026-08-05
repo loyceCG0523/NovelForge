@@ -1,8 +1,11 @@
 """系统内置与用户扩展热梗库接口。"""
 
+from datetime import datetime
+from urllib.parse import quote
+
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile, status
+from fastapi import APIRouter, Depends, File, HTTPException, Query, Response, UploadFile, status
 from sqlalchemy import or_, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
@@ -20,6 +23,7 @@ from app.schemas.meme_library import (
 )
 from app.services.meme_library import (
     MAX_MEME_IMPORT_BYTES,
+    build_meme_library_workbook,
     import_user_meme_entries,
     index_visible_meme_entries,
     normalize_manual_meme_entry,
@@ -27,6 +31,11 @@ from app.services.meme_library import (
 
 
 router = APIRouter(prefix="/api/meme-library", tags=["meme-library"])
+
+
+def can_manage_meme_entry(item: MemeEntry, user_id: UUID) -> bool:
+    """内置条目全局可管理，用户条目只能由所属用户管理。"""
+    return item.namespace == "builtin" or item.owner_id == user_id
 
 
 @router.get("", response_model=list[MemeEntryRead])
@@ -54,10 +63,35 @@ def list_meme_entries(
         db.scalars(
             statement.order_by(
                 MemeEntry.source_type.asc(),
-                MemeEntry.popularity_year_end.desc().nullslast(),
                 MemeEntry.updated_at.desc(),
             ).limit(1000)
         ).all()
+    )
+
+
+@router.get("/export")
+def export_meme_entries(
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> Response:
+    entries = list(
+        db.scalars(
+            select(MemeEntry)
+            .where(
+                or_(
+                    MemeEntry.namespace == "builtin",
+                    MemeEntry.owner_id == current_user.id,
+                )
+            )
+            .order_by(MemeEntry.source_type.asc(), MemeEntry.phrase.asc())
+        ).all()
+    )
+    content = build_meme_library_workbook(entries)
+    filename = f"热梗知识库_{datetime.now().strftime('%Y%m%d_%H%M')}.xlsx"
+    return Response(
+        content=content,
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={"Content-Disposition": f"attachment; filename*=UTF-8''{quote(filename)}"},
     )
 
 
@@ -156,25 +190,19 @@ def update_meme_entry(
     db: Session = Depends(get_db),
 ) -> MemeEntry:
     item = db.get(MemeEntry, entry_id)
-    if item is None or item.owner_id != current_user.id or item.source_type != "user":
-        raise HTTPException(status_code=404, detail="用户热梗不存在或不可编辑")
+    if item is None or not can_manage_meme_entry(item, current_user.id):
+        raise HTTPException(status_code=404, detail="热梗不存在或不可编辑")
     updates = payload.model_dump(exclude_unset=True)
     content_fields = {
         "phrase",
         "meaning",
-        "origin_event",
         "suitable_scenes",
-        "popularity_period",
-        "source_urls",
     }
     if content_fields.intersection(updates):
         merged = {
             "phrase": item.phrase,
             "meaning": item.meaning,
-            "origin_event": item.origin_event,
             "suitable_scenes": item.suitable_scenes,
-            "popularity_period": item.popularity_period,
-            "source_urls": item.source_urls,
             **{
                 key: value
                 for key, value in updates.items()
@@ -193,15 +221,16 @@ def update_meme_entry(
             )
         )
         if duplicate is not None:
-            raise HTTPException(status_code=409, detail="用户扩展库中已存在同名热梗")
+            raise HTTPException(status_code=409, detail="当前热梗库中已存在同名热梗")
         for key, value in values.items():
             setattr(item, key, value)
         item.embedding = None
         item.embedding_model = ""
-        item.library_version = "user-manual"
+        item.library_version = f"{item.source_type}-manual"
         item.metadata_payload = {
             **(item.metadata_payload or {}),
             "source": "manual",
+            "edited_by_user_id": str(current_user.id),
         }
     if "enabled" in updates and updates["enabled"] is not None:
         item.enabled = bool(updates["enabled"])
@@ -209,7 +238,7 @@ def update_meme_entry(
         db.commit()
     except IntegrityError as exc:
         db.rollback()
-        raise HTTPException(status_code=409, detail="用户扩展库中已存在同名热梗") from exc
+        raise HTTPException(status_code=409, detail="当前热梗库中已存在同名热梗") from exc
     db.refresh(item)
     return item
 
@@ -221,7 +250,7 @@ def delete_meme_entry(
     db: Session = Depends(get_db),
 ) -> None:
     item = db.get(MemeEntry, entry_id)
-    if item is None or item.owner_id != current_user.id or item.source_type != "user":
-        raise HTTPException(status_code=404, detail="用户热梗不存在或不可删除")
+    if item is None or not can_manage_meme_entry(item, current_user.id):
+        raise HTTPException(status_code=404, detail="热梗不存在或不可删除")
     db.delete(item)
     db.commit()

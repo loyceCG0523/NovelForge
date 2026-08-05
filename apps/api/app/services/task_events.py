@@ -2,7 +2,10 @@
 
 from __future__ import annotations
 
+import threading
+import time
 from typing import Any
+from uuid import UUID, uuid4
 
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
@@ -130,6 +133,148 @@ class ChapterPreviewPublisher:
         )
 
 
+class ModelThinkingPublisher:
+    """把模型 reasoning_content 合并为低频增量事件，供前端实时展示。"""
+
+    def __init__(
+        self,
+        task: GenerationTask | UUID,
+        *,
+        source_step_key: str,
+        model_role: str,
+        model: str,
+        title: str,
+        chapter_index: int | None = None,
+        min_chars: int = 480,
+        min_interval_seconds: float = 1.2,
+    ) -> None:
+        self.task_id = task.id if isinstance(task, GenerationTask) else task
+        self.source_step_key = source_step_key
+        self.model_role = "reviewer" if model_role == "reviewer" else "writer"
+        self.model = str(model or "")
+        self.title = str(title or "模型思考")
+        self.chapter_index = chapter_index
+        self.min_chars = max(80, int(min_chars))
+        self.min_interval_seconds = max(0.2, float(min_interval_seconds))
+        self.stream_id = str(uuid4())
+        self.attempt = 0
+        self.pending = ""
+        self.total_chars = 0
+        self.output_chars = 0
+        self.started = False
+        self.finished = False
+        self.last_emitted_at = time.monotonic()
+        self._lock = threading.RLock()
+
+    def _emit(
+        self,
+        *,
+        event_type: str,
+        status: str,
+        delta: str = "",
+        activity: dict[str, Any] | None = None,
+    ) -> None:
+        # 事件可能来自并行 LLM 线程；每次使用独立 Session，避免跨线程复用事务。
+        from app.db.session import SessionLocal
+
+        with SessionLocal() as db:
+            task = db.get(GenerationTask, self.task_id)
+            if task is None:
+                return
+            emit_task_event(
+                db,
+                task,
+                event_type=event_type,
+                step_key=f"model_thinking_{self.stream_id}",
+                status=status,
+                title=self.title,
+                message=(
+                    f"已接收 {self.total_chars} 个思考字符"
+                    if self.total_chars
+                    else "等待模型返回思考内容"
+                ),
+                chapter_index=self.chapter_index,
+                payload={
+                    "stream_id": self.stream_id,
+                    "source_step_key": self.source_step_key,
+                    "model_role": self.model_role,
+                    "model": self.model,
+                    "label": self.title,
+                    "attempt": self.attempt,
+                    "delta": delta,
+                    "total_chars": self.total_chars,
+                    "output_chars": self.output_chars,
+                    "elapsed_seconds": (activity or {}).get("elapsed_seconds"),
+                },
+            )
+
+    def start(self, *, attempt: int = 1) -> None:
+        with self._lock:
+            if self.started and not self.finished and self.attempt == attempt:
+                return
+            self.attempt = max(1, int(attempt))
+            self.pending = ""
+            self.total_chars = 0
+            self.output_chars = 0
+            self.started = True
+            self.finished = False
+            self.last_emitted_at = time.monotonic()
+            self._emit(event_type="model_thinking_reset", status="running")
+
+    def append_activity(self, activity: dict[str, Any]) -> None:
+        delta = str(activity.get("reasoning_delta") or "")
+        transport_attempt = max(
+            1,
+            int(activity.get("generation_attempt") or activity.get("attempt") or 1),
+        )
+        with self._lock:
+            if not self.started:
+                self.start(attempt=transport_attempt)
+            elif transport_attempt != self.attempt:
+                self._flush_locked(activity=activity)
+                self.attempt = transport_attempt
+                self.pending = ""
+                self.total_chars = 0
+                self.output_chars = 0
+                self.last_emitted_at = time.monotonic()
+                self._emit(event_type="model_thinking_reset", status="running", activity=activity)
+            self.output_chars = int(activity.get("output_chars") or self.output_chars)
+            if delta:
+                self.pending += delta
+                self.total_chars += len(delta)
+            elapsed = time.monotonic() - self.last_emitted_at
+            if self.pending and (
+                len(self.pending) >= self.min_chars
+                or elapsed >= self.min_interval_seconds
+            ):
+                self._flush_locked(activity=activity)
+
+    def _flush_locked(self, *, activity: dict[str, Any] | None = None) -> None:
+        if not self.pending:
+            return
+        delta = self.pending
+        self.pending = ""
+        self.last_emitted_at = time.monotonic()
+        self._emit(
+            event_type="model_thinking_delta",
+            status="running",
+            delta=delta,
+            activity=activity,
+        )
+
+    def finish(self, *, status: str = "completed") -> None:
+        with self._lock:
+            if self.finished:
+                return
+            if not self.started:
+                self.attempt = 1
+                self.started = True
+                self._emit(event_type="model_thinking_reset", status="running")
+            self._flush_locked()
+            self.finished = True
+            self._emit(event_type="model_thinking_end", status=status)
+
+
 def initialize_task_todo(
     db: Session,
     task: GenerationTask,
@@ -143,7 +288,7 @@ def initialize_task_todo(
         return
     steps: list[tuple[str, str, int | None]] = [
         ("event_plan", "规划剧情事件", None),
-        ("event_research", "检查现实资料需求", None),
+        ("event_research", "检索情节写法与搞笑话术", None),
     ]
     if plan_only:
         steps.append(("event_plan_confirmation", "等待确认章节计划", None))

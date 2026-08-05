@@ -3,7 +3,7 @@
 from uuid import UUID
 
 from pgvector.sqlalchemy import Vector
-from sqlalchemy import Boolean, ForeignKey, Integer, String, Text, UniqueConstraint
+from sqlalchemy import Boolean, ForeignKey, Index, String, Text, UniqueConstraint
 from sqlalchemy.dialects.postgresql import JSONB, UUID as PgUUID
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -20,6 +20,18 @@ class MemeEntry(IdMixin, TimestampMixin, Base):
             "normalized_phrase",
             name="uq_meme_entries_namespace_phrase",
         ),
+        Index(
+            "ix_meme_entries_embedding_hnsw",
+            "embedding",
+            postgresql_using="hnsw",
+            postgresql_ops={"embedding": "vector_cosine_ops"},
+        ),
+        Index(
+            "ix_meme_entries_retrieval_trgm",
+            "retrieval_text",
+            postgresql_using="gin",
+            postgresql_ops={"retrieval_text": "gin_trgm_ops"},
+        ),
     )
 
     owner_id: Mapped[UUID | None] = mapped_column(
@@ -33,12 +45,7 @@ class MemeEntry(IdMixin, TimestampMixin, Base):
     phrase: Mapped[str] = mapped_column(String(120))
     normalized_phrase: Mapped[str] = mapped_column(String(120))
     meaning: Mapped[str] = mapped_column(Text)
-    origin_event: Mapped[str] = mapped_column(Text)
     suitable_scenes: Mapped[str] = mapped_column(Text)
-    popularity_period: Mapped[str] = mapped_column(String(80))
-    popularity_year_start: Mapped[int | None] = mapped_column(Integer, nullable=True, index=True)
-    popularity_year_end: Mapped[int | None] = mapped_column(Integer, nullable=True, index=True)
-    source_urls: Mapped[list[str]] = mapped_column(JSONB, default=list)
     retrieval_text: Mapped[str] = mapped_column(Text)
     content_hash: Mapped[str] = mapped_column(String(64), index=True)
     enabled: Mapped[bool] = mapped_column(Boolean, default=True, index=True)

@@ -3,7 +3,7 @@
 from uuid import UUID
 
 from pgvector.sqlalchemy import Vector
-from sqlalchemy import Float, ForeignKey, Integer, String, Text, UniqueConstraint
+from sqlalchemy import Float, ForeignKey, Index, Integer, String, Text, UniqueConstraint
 from sqlalchemy.dialects.postgresql import JSONB, UUID as PgUUID
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -19,6 +19,18 @@ class SamplePassage(IdMixin, TimestampMixin, Base):
             "sample_analysis_id",
             "content_hash",
             name="uq_sample_passages_analysis_content_hash",
+        ),
+        Index(
+            "ix_sample_passages_embedding_hnsw",
+            "embedding",
+            postgresql_using="hnsw",
+            postgresql_ops={"embedding": "vector_cosine_ops"},
+        ),
+        Index(
+            "ix_sample_passages_content_trgm",
+            "content",
+            postgresql_using="gin",
+            postgresql_ops={"content": "gin_trgm_ops"},
         ),
     )
 

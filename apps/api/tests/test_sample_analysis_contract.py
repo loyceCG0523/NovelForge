@@ -1,12 +1,36 @@
 import unittest
 from unittest.mock import patch
 
-from app.api.sample_analyses import _compact_report_for_read
+from app.api.sample_analyses import _annotation_index_status, _compact_report_for_read
 from app.services.agents.sample_analysis_agent import analyze_sample_chunks
 from app.services.llm_client import LLMConfig
 
 
 class SampleAnalysisContractTests(unittest.TestCase):
+    def test_annotation_index_status_uses_real_counts(self):
+        self.assertEqual(
+            _annotation_index_status({"annotation_count": 0}),
+            "unannotated",
+        )
+        self.assertEqual(
+            _annotation_index_status(
+                {"annotation_count": 2, "indexed_count": 0, "pending_index_count": 2}
+            ),
+            "pending_index",
+        )
+        self.assertEqual(
+            _annotation_index_status(
+                {"annotation_count": 3, "indexed_count": 2, "pending_index_count": 1}
+            ),
+            "partial",
+        )
+        self.assertEqual(
+            _annotation_index_status(
+                {"annotation_count": 2, "indexed_count": 2, "pending_index_count": 0}
+            ),
+            "ready",
+        )
+
     def test_v3_report_is_projected_to_compact_read_contract(self):
         compact = _compact_report_for_read(
             {
@@ -26,17 +50,17 @@ class SampleAnalysisContractTests(unittest.TestCase):
 
         self.assertNotIn("style_fingerprint", compact)
         self.assertNotIn("chunk_summaries", compact)
-        self.assertEqual(len(compact["reference_profile"]["language_rules"]), 4)
-        self.assertEqual(len(compact["reference_profile"]["anti_ai_rules"]), 3)
+        self.assertEqual(len(compact["reference_profile"]["language_principles"]), 4)
+        self.assertEqual(len(compact["reference_profile"]["avoid_errors"]), 3)
 
     @patch("app.services.agents.sample_analysis_agent.LLMClient.complete_json")
-    def test_v4_report_keeps_only_short_reference_profile(self, complete_json):
+    def test_v5_report_keeps_only_three_analysis_outputs(self, complete_json):
         complete_json.return_value = (
             "{}",
             {
-                "summary": "人物说话依赖关系和共同经历。" * 20,
-                "language_rules": [f"语言规则 {index}" * 40 for index in range(8)],
-                "anti_ai_rules": [f"反 AI 规则 {index}" * 40 for index in range(6)],
+                "overall_evaluation": "人物说话依赖关系和共同经历。" * 40,
+                "language_principles": [f"语言原则 {index}" * 40 for index in range(8)],
+                "avoid_errors": [f"应避免错误 {index}" * 40 for index in range(8)],
                 "ignored_field": {"large": "不应保存" * 100},
             },
         )
@@ -54,7 +78,7 @@ class SampleAnalysisContractTests(unittest.TestCase):
             ),
         )
 
-        self.assertEqual(report["schema_version"], "sample_analysis.v4")
+        self.assertEqual(report["schema_version"], "sample_analysis.v5")
         self.assertEqual(
             set(report),
             {"schema_version", "agent", "analysis_mode", "sample", "reference_profile"},
@@ -63,12 +87,14 @@ class SampleAnalysisContractTests(unittest.TestCase):
         self.assertNotIn("style_fingerprint", report)
         self.assertNotIn("chunk_summaries", report)
         profile = report["reference_profile"]
-        self.assertLessEqual(len(profile["summary"]), 180)
-        self.assertLessEqual(len(profile["language_rules"]), 4)
-        self.assertLessEqual(len(profile["anti_ai_rules"]), 3)
-        self.assertTrue(all(len(item) <= 200 for item in profile["language_rules"]))
+        self.assertLessEqual(len(profile["overall_evaluation"]), 1000)
+        self.assertLessEqual(len(profile["language_principles"]), 6)
+        self.assertLessEqual(len(profile["avoid_errors"]), 6)
+        self.assertTrue(all(len(item) <= 200 for item in profile["language_principles"]))
+        self.assertNotIn("plot_experiences", report)
+        self.assertNotIn("expression_experiences", report)
 
-    def test_v4_report_completes_without_llm(self):
+    def test_v5_report_completes_without_llm(self):
         report = analyze_sample_chunks(
             sample_title="测试样本",
             source_genre="现实",
@@ -77,7 +103,7 @@ class SampleAnalysisContractTests(unittest.TestCase):
         )
 
         self.assertFalse(report["reference_profile"]["available"])
-        self.assertEqual(report["reference_profile"]["language_rules"], [])
+        self.assertEqual(report["reference_profile"]["language_principles"], [])
 
 
 if __name__ == "__main__":

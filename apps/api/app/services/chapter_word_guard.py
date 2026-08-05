@@ -175,13 +175,6 @@ def build_word_guard_report(
     }
 
 
-def estimate_chapter_max_tokens(word_range: dict[str, Any] | None) -> int:
-    """给 Chat Completions 足够的输出上限，避免供应商默认截断正文。"""
-    normalized_range = normalize_chapter_word_range(word_range)
-    max_words = int(normalized_range["max"])
-    return max(4096, min(32768, max_words * 3 + 1200))
-
-
 def _build_initial_target_messages(
     base_messages: list[dict[str, str]],
     prompt_range: dict[str, Any],
@@ -299,6 +292,7 @@ def generate_chapter_with_word_guard(
     initial_target_range: dict[str, Any] | None = None,
     stream_callback: Callable[[str, int], None] | None = None,
     stream_reset_callback: Callable[[int], None] | None = None,
+    activity_callback: Callable[[dict[str, Any], int], None] | None = None,
 ) -> tuple[dict[str, Any], dict[str, Any]]:
     """生成章节；若全部修正失败，返回最佳草稿并标记为待修订。"""
     normalized_range = normalize_chapter_word_range(word_range)
@@ -317,8 +311,6 @@ def generate_chapter_with_word_guard(
     attempts: list[dict[str, Any]] = []
     best_result: dict[str, Any] = {"title": "", "summary": "", "content": ""}
     best_report: dict[str, Any] = {}
-    max_tokens = estimate_chapter_max_tokens(normalized_range)
-
     for attempt in range(1, max_attempts + 1):
         temperature = WORD_GUARD_FINE_TUNE_TEMPERATURE if attempt == max_attempts and attempt > 1 else None
         extra: dict[str, Any] = {}
@@ -327,7 +319,14 @@ def generate_chapter_with_word_guard(
             extra["on_stream_reset"] = lambda current_attempt=attempt: (
                 stream_reset_callback(current_attempt) if stream_reset_callback is not None else None
             )
-        result = llm_client.generate_chapter(messages, max_tokens=max_tokens, temperature=temperature, **extra)
+        if activity_callback is not None:
+            extra["on_activity"] = (
+                lambda activity, current_attempt=attempt: activity_callback(
+                    activity,
+                    current_attempt,
+                )
+            )
+        result = llm_client.generate_chapter(messages, temperature=temperature, **extra)
         report = build_word_guard_report(result.get("content"), normalized_range, attempt)
         report = {
             **report,

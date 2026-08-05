@@ -7,7 +7,6 @@ Reviewer 只检查单章内部逻辑、语法表达和明显 AI 化写法，不�
 from __future__ import annotations
 
 import json
-import math
 import re
 import time
 from difflib import SequenceMatcher
@@ -35,10 +34,15 @@ from app.services.event_revision_service import (
     split_chapter_paragraphs,
     text_hash,
 )
-from app.services.llm_client import LLMClient, LLMConfig
+from app.services.llm_client import (
+    LLMClient,
+    LLMConfig,
+    LLMRequestCancelledError,
+    build_context_token_budget,
+)
 from app.services.meme_rag import build_final_meme_usage
 from app.services.punctuation_style_checker import check_punctuation_style
-from app.services.task_events import emit_task_event
+from app.services.task_events import ModelThinkingPublisher, emit_task_event
 
 
 CHAPTER_REVIEW_SOURCE = "chapter_review_cycle"
@@ -47,8 +51,6 @@ ALLOWED_SEVERITIES = {"low", "medium", "high"}
 MAX_CHAPTER_SUGGESTIONS = 20
 MAX_REVIEW_COVERAGE_ATTEMPTS = 2
 MAX_PATCH_COHERENCE_ATTEMPTS = 2
-MAX_CHAPTER_REVIEW_OUTPUT_TOKENS = 10000
-MAX_CHAPTER_PATCH_OUTPUT_TOKENS = 20000
 CHAPTER_PATCH_CONTEXT_RADIUS = 2
 STYLE_PATCH_MIN_LENGTH_RETENTION = 0.68
 STYLE_PATCH_MIN_SEQUENCE_RETENTION = 0.72
@@ -86,32 +88,12 @@ class ChapterReviewRequestError(RuntimeError):
 def build_dynamic_chapter_review_config(
     base_config: LLMConfig,
     messages: list[dict[str, str]],
-    *,
-    max_output_tokens: int = MAX_CHAPTER_REVIEW_OUTPUT_TOKENS,
-) -> tuple[LLMConfig, dict[str, int]]:
-    """按单章审校规模设置流活动超时、总超时和重试次数。"""
+) -> tuple[LLMConfig, dict[str, int | None]]:
+    """单章审校固定使用 60 秒有效内容静默窗口，不限制流总时长。"""
     prompt_chars = sum(len(str(message.get("content") or "")) for message in messages)
     estimated_input_tokens = max(1, prompt_chars)
-    base_first_token_timeout = max(
-        90,
-        min(300, int(60 + estimated_input_tokens / 200)),
-    )
-    base_total_timeout = max(
-        240,
-        min(
-            900,
-            int(base_first_token_timeout + max_output_tokens / 15),
-        ),
-    )
-    activity_timeout = math.ceil(
-        max(float(base_config.timeout_seconds), base_first_token_timeout * 1.5)
-    )
-    total_timeout = math.ceil(
-        max(
-            float(base_config.total_timeout_seconds or 0),
-            base_total_timeout * 1.5,
-        )
-    )
+    context_budget = build_context_token_budget(base_config, messages)
+    activity_timeout = 60
     max_retries = (
         0
         if estimated_input_tokens > 30000
@@ -123,15 +105,15 @@ def build_dynamic_chapter_review_config(
         "activity_timeout_seconds": activity_timeout,
         # 保留旧字段，避免历史前端和任务记录读取失败。
         "first_token_timeout_seconds": activity_timeout,
-        "total_timeout_seconds": total_timeout,
-        "max_output_tokens": max_output_tokens,
+        "total_timeout_seconds": None,
+        **context_budget,
         "max_retries": max_retries,
     }
     return (
         replace(
             base_config,
             timeout_seconds=float(activity_timeout),
-            total_timeout_seconds=float(total_timeout),
+            total_timeout_seconds=None,
             max_retries=max_retries,
         ),
         telemetry,
@@ -142,14 +124,12 @@ def execute_streaming_chapter_review_request(
     base_config: LLMConfig,
     messages: list[dict[str, str]],
     *,
-    max_output_tokens: int = MAX_CHAPTER_REVIEW_OUTPUT_TOKENS,
     on_activity: Callable[[dict[str, Any]], None] | None = None,
 ) -> tuple[str, dict[str, Any], dict[str, Any]]:
     """流式接收审校 JSON，完整接收后再统一解析和校验。"""
     request_config, telemetry = build_dynamic_chapter_review_config(
         base_config,
         messages,
-        max_output_tokens=max_output_tokens,
     )
     started_at = time.monotonic()
     first_delta_at: float | None = None
@@ -165,11 +145,12 @@ def execute_streaming_chapter_review_request(
     try:
         raw_response, parsed = client.complete_json(
             messages,
-            max_tokens=max_output_tokens,
             stream=True,
             on_raw_delta=on_raw_delta,
             on_activity=on_activity,
         )
+    except LLMRequestCancelledError:
+        raise
     except Exception as exc:
         telemetry.update(
             {
@@ -306,7 +287,6 @@ def _compact_chapter_review_context(chapter: Chapter) -> dict[str, Any]:
                 "phrase",
                 "meaning",
                 "suitable_scenes",
-                "popularity_period",
                 "scene_fit_score",
                 "scene_fit",
             )
@@ -423,16 +403,15 @@ def build_chapter_review_prompt(chapter: Chapter) -> list[dict[str, str]]:
             "role": "system",
             "content": (
                 "你是 NovelForge 单章 Reviewer；只能检查当前章节内部，不得评价跨章连续性、事件完成度或下一章走向。"
-                "chapter_contract 仅用于核对本章人物、现实背景、目标和钩子，不得虚构正文外问题。"
-                "按 quality_contract.audit_order 逐项返回 audit_results，覆盖因果/转场、行为与对白现实性、"
-                "状态/视角、人物与事实、细节功能、AI语言和章末钩子；不能只查语法。"
-                "若 tone_pacing_contract 非空，还要检查逐项手续、采购、规则或重复低落是否挤占喜剧推进，"
-                "以及是否至少有两个由人物行动自然形成的喜剧节拍；问题归入 detail_relevance 或 prose_rhythm。"
+                "chapter_contract 只用于核对人物、现实背景、目标和钩子，不得虚构正文外问题。"
+                "按 quality_contract.audit_order 逐项返回 audit_results，覆盖因果、转场、行为对白、状态视角、事实、细节、AI语言和章末钩子，不能只查语法。"
+                "对白须连续检查刺激→人物化理解/误读→可见反应→对方接招；近距离视角应先给可观察证据再有限解释，口语化不等于撒语气词。"
+                "逐段核对人物主体：甲的台词后若转写乙的动作、心理、判断或发言却未另起一段，须定位为 prose_rhythm。"
+                "关系情绪应由称呼、距离、步速、视线、物品或等待等微动作承担；章末应能被下一章第一拍接住。"
+                "tone_pacing_contract 非空时，检查流程是否挤占喜剧推进及因果笑点是否足量。"
                 "破折号须定位为 ai_style：保留原意，改用准确标点、连接词、动作、语气或停顿；不得只机械删除或换一种破折号。"
-                "meme_fit 必须单独核对每条已用热梗的真实含义、人物关系、情绪、required_setup、speech_act、response 和 plot_consequence；"
-                "不能因原词已经出现就判通过。生硬时优先重建候选规定的微场景；若无法在不破坏人物和剧情的前提下成立，应明确建议删除，禁止库外热梗。"
-                "只提可定位、可执行且保留原剧情功能的问题；不得重写正文，不把偏好当错误。"
-                "每维给简短结论、代表段号和原文依据；只输出 JSON。"
+                "meme_fit 单独核对含义、关系、情绪、铺垫、回应和后果；不成立就建议删除。"
+                "只提可定位、可执行且保留原剧情功能的问题；不得重写正文或把偏好当错误。每维给段号、依据和短结论，只输出 JSON。"
             ),
         },
         {
@@ -445,7 +424,7 @@ def build_chapter_review_prompt(chapter: Chapter) -> list[dict[str, str]]:
                 '"status":"pass|issue","paragraph_indexes":[1],"evidence":"对应段落的简短原文依据",'
                 '"conclusion":"该维度为何通过或存在什么问题"}],'
                 '"suggestions":[{"issue_type":"chapter_logic|scene_continuity|behavior_realism|'
-                'dialogue_realism|state_continuity|viewpoint_knowledge|character_consistency|factual_plausibility|detail_relevance|meme_fit|'
+                'dialogue_realism|state_continuity|viewpoint_knowledge|character_consistency|factual_plausibility|detail_relevance|supporting_element_dominance|genre_delivery|meme_fit|'
                 'prose_rhythm|grammar|ai_style|ending_hook",'
                 '"severity":"low|medium|high","paragraph_indexes":[1],'
                 '"problem":"问题是什么","evidence":"原文依据","reader_impact":"为什么会让读者困惑或出戏",'
@@ -555,16 +534,32 @@ def build_rule_based_chapter_suggestions(chapter: Chapter) -> list[dict[str, Any
         paragraph_index = payload.get("paragraph_index")
         if not str(paragraph_index or "").isdigit():
             continue
+        paragraph_indexes = [
+            int(index)
+            for index in (payload.get("paragraph_indexes") or [paragraph_index])
+            if str(index).isdigit()
+        ]
+        if not paragraph_indexes:
+            continue
+        is_pairing_error = record.get("issue_type") == "punctuation_pairing"
         suggestions.append(
             {
                 "suggestion_index": len(suggestions) + 1,
-                "issue_type": "prose_rhythm",
+                "issue_type": "grammar" if is_pairing_error else "prose_rhythm",
                 "severity": record.get("severity") or "low",
-                "paragraph_indexes": [int(paragraph_index)],
+                "paragraph_indexes": paragraph_indexes,
                 "problem": str(record.get("message") or "连续短句造成机械切分。"),
                 "evidence": str(payload.get("evidence") or ""),
-                "reader_impact": "停顿密度与语义关系不匹配，容易形成机械罗列感。",
-                "repair_scope": "保留原有信息和必要强调，只调整句间组织。",
+                "reader_impact": (
+                    "引号或括号方向错误会直接破坏对白边界和阅读理解。"
+                    if is_pairing_error
+                    else "停顿密度与语义关系不匹配，容易形成机械罗列感。"
+                ),
+                "repair_scope": (
+                    "只修正成对标点，禁止改写、删减或补充正文。"
+                    if is_pairing_error
+                    else "保留原有信息和必要强调，只调整句间组织。"
+                ),
                 "suggestion": str(payload.get("suggestion") or "按语义合并短句。"),
                 "source": "punctuation_style_checker",
             }
@@ -718,18 +713,17 @@ def build_chapter_patch_prompt(
         {
             "role": "system",
             "content": (
-                "你是 NovelForge 局部修订 Writer，只执行 Reviewer 建议；不得重写整章、改变剧情/人物/事实或越界修改。"
+                "你是 NovelForge 局部修订 Writer，只执行 Reviewer 建议；不得重写整章、改变剧情人物事实或越界修改。"
                 "保留 repair_scope 和必要因果；转场、动机、对白、道具问题可联改被点名段落，不能生硬补解释。"
-                "语言类问题只改标点、连接、语序和必要动作，保留原段解释、事实、关键对白；不得拿局部 evidence 替换整段，"
-                "异常缩短或丢失关键表述的补丁会被拒绝。"
+                "场景或对白无变化时，修复最小的‘刺激→人物化理解/回避→可见反应→对方接招→局面变化’，不得只撒语气词或切碎书面句。"
+                "关系情绪用称呼、距离、视线、步速、物品或等待落地；抽象喜剧须来自人物误判并由对方反应接住。"
+                "语言类问题保留原段事实和关键对白；异常缩短或丢失关键表述的补丁会被拒绝。"
                 "目标段提供前后各 2 段：邻段默认不动；仅为消除重复、冲突或承接断裂而改，并在 reason 说明。"
-                "输出前连续阅读修改后的整个窗口，确认提问—回答、动作—反应、指代和说话人仍能逐句承接。"
-                "重复内容应合并后 delete 冗余段；无效细节应压缩，不得换成随机环境/品牌/数字，也不新增刻板比喻、万能拟人、空泛总结或假钩子。"
+                "重复内容合并后 delete 冗余段；无效细节压缩，禁止随机环境、品牌、数字、空泛总结或假钩子。"
                 "处理破折号问题时保留原意，用准确标点、连接词、动作、语气或停顿；不得只删符号或换另一种破折号。"
-                "热梗不自然时，必须按候选的真实含义、人物关系、情绪及微场景要求调整；"
-                "若不改变人物和剧情仍无法成立，应删除该热梗，禁止为了数量硬留，也禁止库外热梗。"
-                "replace 只返回完整单段；delete 仅删已合并冗余。按 paragraph_index 绑定原文，不要返回 old_text。"
-                "同段建议合并，无需修改不返回；new_text 不得含多段。只输出 JSON。"
+                "热梗无法按真实含义和人物关系自然成立时应删除，禁止为了数量硬留。"
+                "replace 只返回完整单段；人物主体混段时用 split，并返回2—4个 new_paragraphs，每项单段且合起来只改原段。"
+                "按 paragraph_index 绑定原文，不要返回 old_text；同段建议合并，无需修改不返回。只输出 JSON。"
             ),
         },
         {
@@ -740,7 +734,9 @@ def build_chapter_patch_prompt(
                 '{"patches":[{"paragraph_index":3,"operation":"replace",'
                 '"new_text":"替换后的完整段落",'
                 '"reason":"对应的建议及修改理由"},'
-                '{"paragraph_index":4,"operation":"delete",'
+                '{"paragraph_index":4,"operation":"split",'
+                '"new_paragraphs":["说话者的台词及动作","听者的反应"],"reason":"人物主体切换，拆段"},'
+                '{"paragraph_index":5,"operation":"delete",'
                 '"new_text":"","reason":"内容已合并到第3段，删除重复段"}]}\n\n'
                 + json.dumps(payload, ensure_ascii=False, separators=(",", ":"))
             ),
@@ -957,7 +953,6 @@ def validate_chapter_patch_coherence(
             raw, parsed, telemetry = execute_streaming_chapter_review_request(
                 coherence_config,
                 messages,
-                max_output_tokens=1800,
             )
             raw_checks = parsed.get("checks")
             valid_check_indexes = {
@@ -1129,15 +1124,33 @@ def normalize_chapter_writer_patches(
         if model_old_text and model_old_text != expected:
             canonicalized_old_text_indexes.append(paragraph_index)
         operation = str(raw_patch.get("operation") or "replace").strip().lower()
-        if operation not in {"replace", "delete"}:
+        if operation not in {"replace", "delete", "split"}:
             reject(
                 code="invalid_operation",
-                message=f"第 {paragraph_index} 段 operation 必须是 replace 或 delete",
+                message=f"第 {paragraph_index} 段 operation 必须是 replace、delete 或 split",
                 paragraph_index=paragraph_index,
                 raw_patch=raw_patch,
             )
             continue
-        new_text = str(raw_patch.get("new_text") or "").strip()
+        new_paragraphs: list[str] = []
+        if operation == "split":
+            raw_new_paragraphs = raw_patch.get("new_paragraphs")
+            if not isinstance(raw_new_paragraphs, list):
+                raw_new_paragraphs = []
+            new_paragraphs = [str(item or "").strip() for item in raw_new_paragraphs]
+            if not 2 <= len(new_paragraphs) <= 4 or any(
+                not item or "\n" in item or "\r" in item for item in new_paragraphs
+            ):
+                reject(
+                    code="invalid_split",
+                    message=f"第 {paragraph_index} 段 split 必须返回 2—4 个非空单段 new_paragraphs",
+                    paragraph_index=paragraph_index,
+                    raw_patch=raw_patch,
+                )
+                continue
+            new_text = "\n\n".join(new_paragraphs)
+        else:
+            new_text = str(raw_patch.get("new_text") or "").strip()
         if operation == "replace" and not new_text:
             reject(
                 code="empty_new_text",
@@ -1154,7 +1167,7 @@ def normalize_chapter_writer_patches(
                 raw_patch=raw_patch,
             )
             continue
-        if operation == "replace" and new_text == expected:
+        if operation in {"replace", "split"} and new_text == expected:
             reject(
                 code="no_change",
                 message=f"第 {paragraph_index} 段没有发生变化",
@@ -1176,7 +1189,7 @@ def normalize_chapter_writer_patches(
             paragraph_index,
         )
         preservation_validation = None
-        if operation == "replace" and preservation_policy is not None:
+        if operation in {"replace", "split"} and preservation_policy is not None:
             preservation_validation = _style_patch_retention_report(expected, new_text)
             if not preservation_validation["valid"]:
                 reject(
@@ -1216,6 +1229,7 @@ def normalize_chapter_writer_patches(
                 "old_text_hash": text_hash(expected),
                 "old_text": expected,
                 "new_text": new_text,
+                "new_paragraphs": new_paragraphs,
                 "operation": operation,
                 "scope": "target" if paragraph_index in target_indexes else "context_neighbor",
                 "reason": reason or "单章审校定向修改",
@@ -1552,8 +1566,8 @@ def review_and_revise_chapter_once(
                 title=f"正在流式审校第 {chapter.chapter_index} 章",
                 message=(
                     f"第 {attempt} 次检查；输入约 {request_budget['prompt_chars']} 字符，"
-                    f"无流活动超时 {int(request_config.timeout_seconds)} 秒，"
-                    f"总超时 {int(request_config.total_timeout_seconds or 0)} 秒"
+                    f"首段及流中静默超时 {int(request_config.timeout_seconds)} 秒，"
+                    "流式生成无总时长上限"
                 ),
                 progress=review_progress,
                 chapter_id=chapter.id,
@@ -1561,9 +1575,21 @@ def review_and_revise_chapter_once(
                 payload={"request_budget": request_budget, "review_attempt": attempt},
             )
             last_activity_notice_at = 0.0
+            review_thinking = ModelThinkingPublisher(
+                task,
+                source_step_key=f"chapter_{chapter.chapter_index}_review",
+                model_role="reviewer",
+                model=reviewer_config.model,
+                title=f"审校模型 · 第 {chapter.chapter_index} 章审校",
+                chapter_index=chapter.chapter_index,
+            )
+            review_thinking.start(attempt=attempt)
 
             def report_review_activity(activity: dict[str, Any]) -> None:
                 nonlocal last_activity_notice_at
+                review_thinking.append_activity(
+                    {**activity, "generation_attempt": attempt}
+                )
                 now = time.monotonic()
                 if now - last_activity_notice_at < 10:
                     return
@@ -1598,7 +1624,11 @@ def review_and_revise_chapter_once(
                         on_activity=report_review_activity,
                     )
                 )
+            except LLMRequestCancelledError:
+                review_thinking.finish(status="paused")
+                raise
             except ChapterReviewRequestError as exc:
+                review_thinking.finish(status="failed")
                 result["review_attempts"].append(
                     {
                         "attempt": attempt,
@@ -1607,6 +1637,8 @@ def review_and_revise_chapter_once(
                     }
                 )
                 raise
+            else:
+                review_thinking.finish()
             normalized_attempt = normalize_chapter_suggestions(parsed, paragraph_count)
             reviewer_suggestions = merge_chapter_suggestions(
                 reviewer_suggestions,
@@ -1693,6 +1725,9 @@ def review_and_revise_chapter_once(
                 "review_coverage": coverage,
             },
         )
+    except LLMRequestCancelledError:
+        db.rollback()
+        raise
     except Exception as exc:
         db.rollback()
         result["status"] = "failed"
@@ -1790,11 +1825,29 @@ def review_and_revise_chapter_once(
     patch_records: list[tuple[ChapterRevisionPatch, dict[str, Any]]] = []
     try:
         patch_messages = build_chapter_patch_prompt(chapter, suggestions)
-        raw_response, parsed, writer_telemetry = execute_streaming_chapter_review_request(
-            writer_config,
-            patch_messages,
-            max_output_tokens=MAX_CHAPTER_PATCH_OUTPUT_TOKENS,
+        writer_thinking = ModelThinkingPublisher(
+            task,
+            source_step_key=f"chapter_{chapter.chapter_index}_revision",
+            model_role="writer",
+            model=writer_config.model,
+            title=f"正文模型 · 第 {chapter.chapter_index} 章定向修改",
+            chapter_index=chapter.chapter_index,
         )
+        writer_thinking.start()
+        try:
+            raw_response, parsed, writer_telemetry = execute_streaming_chapter_review_request(
+                writer_config,
+                patch_messages,
+                on_activity=writer_thinking.append_activity,
+            )
+        except LLMRequestCancelledError:
+            writer_thinking.finish(status="paused")
+            raise
+        except Exception:
+            writer_thinking.finish(status="failed")
+            raise
+        else:
+            writer_thinking.finish()
         normalized_patches, rejected_patches, canonicalized_indexes = (
             normalize_chapter_writer_patches(parsed, chapter, suggestions)
         )
@@ -1869,22 +1922,40 @@ def review_and_revise_chapter_once(
                 payload={"retry_paragraph_indexes": sorted(retry_indexes)},
             )
             try:
-                retry_raw_response, retry_parsed, retry_telemetry = (
-                    execute_streaming_chapter_review_request(
-                        writer_config,
-                        build_chapter_patch_prompt(
-                            chapter,
-                            retry_suggestions,
-                            retry_paragraph_indexes=sorted(retry_indexes),
-                            validation_errors=[
-                                item
-                                for item in rejected_patches
-                                if item.get("paragraph_index") in retry_indexes
-                            ],
-                        ),
-                        max_output_tokens=MAX_CHAPTER_PATCH_OUTPUT_TOKENS,
-                    )
+                retry_thinking = ModelThinkingPublisher(
+                    task,
+                    source_step_key=f"chapter_{chapter.chapter_index}_revision_retry",
+                    model_role="writer",
+                    model=writer_config.model,
+                    title=f"正文模型 · 第 {chapter.chapter_index} 章补丁重试",
+                    chapter_index=chapter.chapter_index,
                 )
+                retry_thinking.start()
+                try:
+                    retry_raw_response, retry_parsed, retry_telemetry = (
+                        execute_streaming_chapter_review_request(
+                            writer_config,
+                            build_chapter_patch_prompt(
+                                chapter,
+                                retry_suggestions,
+                                retry_paragraph_indexes=sorted(retry_indexes),
+                                validation_errors=[
+                                    item
+                                    for item in rejected_patches
+                                    if item.get("paragraph_index") in retry_indexes
+                                ],
+                            ),
+                            on_activity=retry_thinking.append_activity,
+                        )
+                    )
+                except LLMRequestCancelledError:
+                    retry_thinking.finish(status="paused")
+                    raise
+                except Exception:
+                    retry_thinking.finish(status="failed")
+                    raise
+                else:
+                    retry_thinking.finish()
                 retry_patches, retry_rejected, retry_canonicalized = (
                     normalize_chapter_writer_patches(
                         retry_parsed,
@@ -2184,6 +2255,9 @@ def review_and_revise_chapter_once(
                 ],
             },
         )
+    except LLMRequestCancelledError:
+        db.rollback()
+        raise
     except Exception as exc:
         if isinstance(exc, ChapterReviewRequestError):
             result["writer_attempts"].append(

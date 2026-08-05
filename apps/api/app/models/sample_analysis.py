@@ -1,8 +1,9 @@
-"""样本分析报告模型。"""
+"""协同样本作品及其AI总体分析模型。"""
 
+from datetime import datetime
 from uuid import UUID
 
-from sqlalchemy import BigInteger, ForeignKey, Integer, String, Text
+from sqlalchemy import BigInteger, Boolean, DateTime, ForeignKey, Integer, String, Text
 from sqlalchemy.dialects.postgresql import JSONB, UUID as PgUUID
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -33,3 +34,16 @@ class SampleAnalysis(IdMixin, TimestampMixin, Base):
     summary: Mapped[str] = mapped_column(Text, default="")
     metrics: Mapped[dict] = mapped_column(JSONB, default=dict)
     report: Mapped[dict] = mapped_column(JSONB, default=dict)
+    visibility: Mapped[str] = mapped_column(String(20), default="private", index=True)
+    publication_status: Mapped[str] = mapped_column(
+        String(30), default="private", index=True
+    )
+    reuse_policy: Mapped[str] = mapped_column(
+        String(30), default="reference_only", index=True
+    )
+    rights_declared: Mapped[bool] = mapped_column(Boolean, default=False)
+    content_hash: Mapped[str] = mapped_column(String(64), default="", index=True)
+    version: Mapped[int] = mapped_column(Integer, default=1)
+    published_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )

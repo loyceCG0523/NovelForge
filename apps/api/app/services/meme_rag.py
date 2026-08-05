@@ -2,13 +2,12 @@
 
 from __future__ import annotations
 
-from datetime import date
 import json
 import re
-from typing import Any
+from typing import Any, Callable
 from uuid import UUID
 
-from sqlalchemy import desc, func, or_, select
+from sqlalchemy import desc, func, select
 from sqlalchemy.orm import Session
 
 from app.models.chapter import Chapter
@@ -17,7 +16,11 @@ from app.models.meme_entry import MemeEntry
 from app.models.novel import Novel
 from app.models.user import User
 from app.services.embedding_client import EmbeddingClient, build_embedding_config
-from app.services.llm_client import LLMClient, build_review_llm_config
+from app.services.llm_client import (
+    LLMClient,
+    LLMRequestCancelledError,
+    build_review_llm_config,
+)
 from app.services.meme_library import (
     index_visible_meme_entries,
     meme_embedding_model_key,
@@ -25,8 +28,8 @@ from app.services.meme_library import (
 )
 
 
-MIN_MEME_VECTOR_SIMILARITY = 0.30
-MIN_MEME_SCENE_FIT_SCORE = 78
+MIN_MEME_VECTOR_SIMILARITY = 0.40
+MIN_MEME_SCENE_FIT_SCORE = 92
 MAX_MEME_RERANK_CANDIDATES = 12
 
 
@@ -35,12 +38,6 @@ def _compact_json(value: Any, max_chars: int) -> str:
         return json.dumps(value, ensure_ascii=False, separators=(",", ":"))[:max_chars]
     except (TypeError, ValueError):
         return str(value or "")[:max_chars]
-
-
-def _story_year(context: dict[str, Any]) -> int:
-    story_era = str((context.get("constraints") or {}).get("story_era") or "")
-    years = [int(item) for item in re.findall(r"(?<!\d)(20\d{2})(?!\d)", story_era)]
-    return years[-1] if years else date.today().year
 
 
 def build_chapter_meme_query(novel: Novel, context: dict[str, Any]) -> str:
@@ -88,7 +85,7 @@ def build_chapter_meme_query(novel: Novel, context: dict[str, Any]) -> str:
     active_profiles = [
         {
             key: item.get(key)
-            for key in ("name", "age", "occupation", "detailed_setting")
+            for key in ("name", "age", "detailed_setting")
             if item.get(key) not in (None, "", [], {})
         }
         for item in profiles
@@ -156,6 +153,8 @@ def build_meme_scene_fit_prompt(
                 "允许为合格候选主动设计一段不改变核心剧情的微场景，但必须包含铺垫、原词、"
                 "对方回应和剧情/关系后果。若需要改变人物性格、转移当前话题、凭空制造争执、"
                 "让不熟的人突然使用熟人口吻，或命中 suitable_scenes 的禁用条件，必须拒绝。"
+                "默认结论是拒绝；只有无需改动当前话题、人物口吻和关系距离，原词本身就比普通表达更自然时才通过。"
+                "职业名词相似、能制造一句吐槽、角色知道互联网或理论上说得通，都不是通过理由。"
             ),
         },
         {
@@ -167,7 +166,7 @@ def build_meme_scene_fit_prompt(
                 '"speaker":"","listener":"","relationship":"","emotion":"",'
                 '"speech_act":"","required_setup":"","scene_anchor":"","response":"",'
                 '"plot_consequence":"","reason":""}]}\n'
-                "fit_score 为0—100；三项硬条件全部成立且分数至少78才可 eligible=true。"
+                "fit_score 为0—100；三项硬条件全部成立且分数至少92才可 eligible=true。"
                 "required_setup 必须描述热梗出现前已经发生的具体互动，不能只是“自然聊天”。\n"
                 + json.dumps(payload, ensure_ascii=False, separators=(",", ":"))
             ),
@@ -334,6 +333,7 @@ def build_chapter_meme_pack(
     context: dict[str, Any],
     limit: int = 5,
     story_event_id: UUID | str | None = None,
+    cancel_check: Callable[[], bool] | None = None,
 ) -> dict[str, Any]:
     owner = db.get(User, novel.owner_id)
     if owner is None:
@@ -356,7 +356,6 @@ def build_chapter_meme_pack(
             "conversational intent, emotion, and scene."
         ),
     )[0]
-    story_year = _story_year(context)
     target_chapter_index = int(
         ((context.get("target") or {}).get("chapter_index") or 0)
     )
@@ -371,8 +370,6 @@ def build_chapter_meme_pack(
         *visible_meme_filters(owner.id),
         MemeEntry.embedding_model == meme_embedding_model_key(config.model),
         MemeEntry.embedding.is_not(None),
-        or_(MemeEntry.popularity_year_start.is_(None), MemeEntry.popularity_year_start <= story_year),
-        or_(MemeEntry.popularity_year_end.is_(None), MemeEntry.popularity_year_end >= story_year - 1),
     ]
     if event_used_phrases:
         filters.append(~MemeEntry.phrase.in_(event_used_phrases))
@@ -422,8 +419,6 @@ def build_chapter_meme_pack(
         entry = item["entry"]
         if entry.source_type == "user":
             item["score"] += 0.008
-        if entry.popularity_year_end and entry.popularity_year_end >= story_year:
-            item["score"] += 0.006
 
     qualified = [
         item
@@ -440,9 +435,7 @@ def build_chapter_meme_pack(
                 "entry_id": str(entry.id),
                 "phrase": entry.phrase,
                 "meaning": entry.meaning[:260],
-                "origin_event": entry.origin_event[:320],
                 "suitable_scenes": entry.suitable_scenes[:360],
-                "popularity_period": entry.popularity_period,
                 "source_type": entry.source_type,
                 "retrieval_score": round(item["score"], 6),
                 "vector_similarity": round(item["vector_similarity"], 6),
@@ -461,13 +454,13 @@ def build_chapter_meme_pack(
             scene_rerank_status = "unavailable"
             scene_rerank_error = "未配置可用的正文或审校模型，无法执行热梗场景复排"
         else:
+            review_config.cancel_check = cancel_check
             try:
                 _, scene_fit_payload = LLMClient(review_config).complete_json(
                     build_meme_scene_fit_prompt(
                         query_text=query_text,
                         candidates=retrieval_candidates,
                     ),
-                    max_tokens=3200,
                     temperature=0.1,
                 )
                 scene_fitted, scene_rejected_count = apply_meme_scene_fit_results(
@@ -476,6 +469,8 @@ def build_chapter_meme_pack(
                 )
                 references = scene_fitted[: max(1, min(limit, 8))]
                 scene_rerank_status = "completed"
+            except LLMRequestCancelledError:
+                raise
             except Exception as exc:
                 scene_rerank_status = "failed"
                 scene_rerank_error = str(exc)
@@ -489,7 +484,6 @@ def build_chapter_meme_pack(
         ),
         "query": query_text,
         "references": references,
-        "story_year": story_year,
         "embedding_model": config.model,
         "indexed_now": int(index_result.get("indexed") or 0),
         "retrieved_count": len(merged),

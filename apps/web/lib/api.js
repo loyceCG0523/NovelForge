@@ -6,6 +6,14 @@ export function getToken() {
   return localStorage.getItem("novelforge_token") || "";
 }
 
+export function isTaskInFlight(status) {
+  return ["queued", "running"].includes(String(status || ""));
+}
+
+export function isTaskSettled(status) {
+  return ["completed", "failed", "cancelled", "waiting"].includes(String(status || ""));
+}
+
 export function setSession(token, user) {
   // 当前 MVP 使用 localStorage 保存会话；生产环境可替换为更严格的 Cookie 策略。
   localStorage.setItem("novelforge_token", token);
@@ -129,6 +137,54 @@ export async function apiDownload(path, fallbackFilename = "novelforge-export.tx
   link.remove();
   URL.revokeObjectURL(url);
   return filename;
+}
+
+export function subscribeSse(path, onEvent, onError) {
+  // 使用带Authorization的fetch读取SSE；断线后按最后事件序号继续补拉。
+  const controller = new AbortController();
+  let lastSequence = 0;
+
+  async function connect() {
+    while (!controller.signal.aborted) {
+      const separator = path.includes("?") ? "&" : "?";
+      const target = `${API_BASE_URL}${path}${separator}after_sequence=${lastSequence}`;
+      try {
+        const headers = new Headers({ Accept: "text/event-stream" });
+        const token = getToken();
+        if (token) headers.set("Authorization", `Bearer ${token}`);
+        const response = await fetch(target, { headers, cache: "no-store", signal: controller.signal });
+        if (!response.ok || !response.body) throw new Error(`实时连接失败：${response.status}`);
+        const reader = response.body.getReader();
+        const decoder = new TextDecoder();
+        let buffer = "";
+        while (!controller.signal.aborted) {
+          const { value, done } = await reader.read();
+          if (done) break;
+          buffer += decoder.decode(value, { stream: true }).replace(/\r\n/g, "\n");
+          let boundary = buffer.indexOf("\n\n");
+          while (boundary >= 0) {
+            const block = buffer.slice(0, boundary);
+            buffer = buffer.slice(boundary + 2);
+            const dataLine = block.split("\n").find((line) => line.startsWith("data:"));
+            if (dataLine) {
+              const event = JSON.parse(dataLine.slice(5).trim());
+              lastSequence = Math.max(lastSequence, Number(event.sequence_no || 0));
+              onEvent?.(event);
+            }
+            boundary = buffer.indexOf("\n\n");
+          }
+        }
+      } catch (error) {
+        if (!controller.signal.aborted) onError?.(error);
+      }
+      if (!controller.signal.aborted) {
+        await new Promise((resolve) => window.setTimeout(resolve, 1200));
+      }
+    }
+  }
+
+  connect();
+  return () => controller.abort();
 }
 
 export async function register(payload) {

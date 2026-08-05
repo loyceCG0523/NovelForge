@@ -421,9 +421,9 @@ def get_sample_style_reference_context(db: Session, novel: Novel, limit: int = 3
             profile = {
                 "available": bool(strategy.get("available")),
                 "model": strategy.get("model", ""),
-                "summary": strategy.get("style_summary", ""),
-                "language_rules": [str(value)[:220] for value in language_rules[:4]],
-                "anti_ai_rules": [
+                "overall_evaluation": strategy.get("style_summary", ""),
+                "language_principles": [str(value)[:220] for value in language_rules[:4]],
+                "avoid_errors": [
                     str(value)[:220]
                     for value in (strategy.get("anti_ai_guidelines") or [])[:3]
                 ],
@@ -569,9 +569,13 @@ def _build_sample_style_rules(sample_style_references: list[dict[str, Any]]) -> 
     rules = []
     for reference in sample_style_references[:3]:
         profile = reference.get("reference_profile") or {}
-        for item in (profile.get("language_rules") or [])[:2]:
+        for item in (
+            profile.get("language_principles") or profile.get("language_rules") or []
+        )[:2]:
             rules.append(str(item)[:220])
-        for item in (profile.get("anti_ai_rules") or [])[:1]:
+        for item in (
+            profile.get("avoid_errors") or profile.get("anti_ai_rules") or []
+        )[:1]:
             rules.append(str(item)[:220])
     return rules[:6]
 

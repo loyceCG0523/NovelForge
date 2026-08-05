@@ -17,8 +17,6 @@ from app.services.object_storage import iter_text_object_chunks
 
 MAX_ANALYSIS_PARTS = 10
 TARGET_PART_CHARS = 100_000
-PART_OUTPUT_TOKENS = 30_000
-MERGE_OUTPUT_TOKENS = 30_000
 EXPERIENCE_SCHEMA_VERSION = "sample_experience.v1"
 
 
@@ -79,6 +77,8 @@ def _part_prompt(
             "content": (
                 "你是资深中文网络小说拆解编辑。你的任务不是统计句长或复述故事，"
                 "而是从优秀样本原文中提炼可迁移的剧情设计经验和语言表达经验。"
+                "必须沿章节边界观察章首如何承接、说明何时插入、视角人物怎样误读、"
+                "一句话如何触发反应与反击、笑点怎样回收、章末如何把未完一拍交给下一章。"
                 "只根据原文判断；过滤广告、乱码、目录、重复段落和明显残句。"
                 "保留能证明经验的短原句，但不得大段复制。只输出严格 JSON。"
             ),
@@ -93,11 +93,19 @@ def _part_prompt(
                 "character_desire、conflict_and_escalation、character_choice、turn_or_reframe、"
                 "payoff、consequence、why_effective、transferable_pattern、applicable_genres、"
                 "applicable_scenes、quality_score。\n"
-                "表达经验最多 18 条，优先选择精彩对话、比喻、动作反应、潜台词和具体描写。"
+                "表达经验最多 18 条。不要只挑漂亮单句；优先选择完整有效的小结构："
+                "chapter_opening_pickup、close_pov_reaction、dialogue_reaction_chain、"
+                "comic_logic_and_callback、romantic_micro_signal、exposition_on_demand、"
+                "chapter_ending_handoff，也可保留真正精彩的比喻和具体描写。尤其筛选高辨识度亮点："
+                "身份自抬后被字面降格、顺着对方逻辑反杀、一本正经说荒唐话、系统规则被生活化吐槽、"
+                "自恋式内心独白、谐音或错词自我加冕、围观者短促补刀。不要把普通信息对白评成亮点。"
                 "每条字段：title、category、original_excerpt、context、relationship、emotion、"
                 "speech_act、response_pattern、why_effective、transferable_technique、"
-                "usage_boundary、applicable_scenes、quality_score。original_excerpt 不超过 220 字。\n"
-                "quality_score 为 0—100，只保留真正值得复用的内容。\n"
+                "usage_boundary、applicable_scenes、quality_score。response_pattern 必须写清刺激、"
+                "人物化理解/回避、可见反应、对方接招和局面变化；不适用的环节说明原因。"
+                "original_excerpt 不超过 220 字。\n"
+                "quality_score 为 0—100；按意外性、人物声音、压缩效率、回应力度、可迁移性评分，"
+                "亮点条目低于88分不要保留。宁缺毋滥。\n"
                 "顶层 JSON 字段：part_summary、plot_experiences、expression_experiences、"
                 "discarded_noise_note。\n\n"
                 f"【样本原文分区】\n{content}"
@@ -296,6 +304,8 @@ def _merge_prompt(
             "content": (
                 "你是中文网络小说总编。请把分区分析合并为一份高密度经验库。"
                 "合并同类项但保留真正不同的剧情机制和语言表达，不能把具体经验压缩成空泛常识。"
+                "尤其保留章际接力、近距离视角反应链、对白刺激—误读—反击、"
+                "人物逻辑笑点与回旋镖、关系微动作和按需说明这六类可执行经验。"
                 "只输出严格 JSON。"
             ),
         },
@@ -461,7 +471,6 @@ def build_sample_experience_document(
                 part_count=len(parts),
                 content=content,
             ),
-            max_tokens=PART_OUTPUT_TOKENS,
         )
         return _normalize_part_result(parsed, part_index)
 
@@ -498,7 +507,6 @@ def build_sample_experience_document(
                 source_genre=source_genre,
                 part_results=results,
             ),
-            max_tokens=MERGE_OUTPUT_TOKENS,
         )
         document = _normalize_merged_document(parsed, fallback=fallback)
     except Exception as exc:  # noqa: BLE001 - 分区成果仍可形成可用经验文档。

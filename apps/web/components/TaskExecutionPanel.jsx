@@ -25,6 +25,137 @@ function latestByStep(events) {
   return order.map((key) => values.get(key));
 }
 
+const thinkingEventTypes = new Set([
+  "model_thinking_reset",
+  "model_thinking_delta",
+  "model_thinking_end"
+]);
+
+function collectThinkingStreams(events) {
+  const streams = new Map();
+  for (const event of events || []) {
+    if (!thinkingEventTypes.has(event.event_type)) continue;
+    const payload = event.payload || {};
+    const streamId = String(payload.stream_id || event.step_key || "");
+    if (!streamId) continue;
+    const current = streams.get(streamId) || {
+      id: streamId,
+      text: "",
+      modelRole: payload.model_role === "reviewer" ? "reviewer" : "writer",
+      model: payload.model || "",
+      label: payload.label || event.title || "模型思考",
+      chapterIndex: event.chapter_index || null,
+      status: "running",
+      totalChars: 0,
+      outputChars: 0,
+      sequenceNo: 0
+    };
+    if (event.event_type === "model_thinking_reset") current.text = "";
+    if (event.event_type === "model_thinking_delta") {
+      current.text += String(payload.delta || "");
+    }
+    current.modelRole = payload.model_role === "reviewer" ? "reviewer" : "writer";
+    current.model = payload.model || current.model;
+    current.label = payload.label || event.title || current.label;
+    current.chapterIndex = event.chapter_index || current.chapterIndex;
+    current.status = event.status || current.status;
+    current.totalChars = Number(payload.total_chars || current.text.length);
+    current.outputChars = Number(payload.output_chars || 0);
+    current.sequenceNo = Number(event.sequence_no || 0);
+    streams.set(streamId, current);
+  }
+  const ordered = [...streams.values()].sort((left, right) => right.sequenceNo - left.sequenceNo);
+  return {
+    writer: ordered.filter((stream) => stream.modelRole === "writer"),
+    reviewer: ordered.filter((stream) => stream.modelRole === "reviewer"),
+    latestSequence: ordered[0]?.sequenceNo || 0,
+    hasRunning: ordered.some((stream) => stream.status === "running")
+  };
+}
+
+function ThinkingLane({ role, streams }) {
+  const [selection, setSelection] = useState("latest");
+  const [followTail, setFollowTail] = useState(true);
+  const contentRef = useRef(null);
+  const stream = selection === "latest"
+    ? streams[0]
+    : streams.find((item) => item.id === selection) || streams[0];
+
+  useEffect(() => {
+    if (selection !== "latest" && !streams.some((item) => item.id === selection)) {
+      setSelection("latest");
+    }
+  }, [selection, streams]);
+
+  useEffect(() => {
+    setFollowTail(true);
+  }, [stream?.id]);
+
+  useEffect(() => {
+    const node = contentRef.current;
+    if (!node || !followTail) return;
+    const frame = window.requestAnimationFrame(() => {
+      node.scrollTop = node.scrollHeight;
+    });
+    return () => window.cancelAnimationFrame(frame);
+  }, [followTail, stream?.text]);
+
+  const roleLabel = role === "reviewer" ? "审校模型" : "生成模型";
+  const stateLabel = stream?.status === "running"
+    ? "思考中"
+    : stream?.status === "failed"
+      ? "已中断"
+      : "已结束";
+  return (
+    <article className={`thinking-lane ${role}`}>
+      <div className="thinking-lane-head">
+        <span>
+          <strong>{roleLabel}</strong>
+          <small>{stream?.model || "等待调用"}</small>
+        </span>
+        {streams.length > 1 ? (
+          <select
+            value={selection}
+            onChange={(event) => setSelection(event.target.value)}
+            aria-label={`选择${roleLabel}思考记录`}
+          >
+            <option value="latest">跟随最新调用</option>
+            {streams.map((item) => (
+              <option key={item.id} value={item.id}>{item.label}</option>
+            ))}
+          </select>
+        ) : null}
+        {stream ? <em className={stream.status}>{stateLabel}</em> : null}
+      </div>
+      {stream ? (
+        <>
+          <div className="thinking-lane-meta">
+            <span>{stream.label}</span>
+            <span>{stream.totalChars || stream.text.length} 字符</span>
+          </div>
+          <div
+            className="thinking-lane-content"
+            ref={contentRef}
+            onScroll={(event) => {
+              const node = event.currentTarget;
+              setFollowTail(node.scrollHeight - node.scrollTop - node.clientHeight < 36);
+            }}
+          >
+            {stream.text ? <pre>{stream.text}</pre> : (
+              <p>
+                {stream.status === "running"
+                  ? "连接已建立，等待模型返回独立思考内容…"
+                  : "该模型本次没有返回可展示的独立思考内容。"}
+              </p>
+            )}
+            {stream.status === "running" ? <i className="thinking-caret" aria-hidden="true" /> : null}
+          </div>
+        </>
+      ) : <div className="thinking-lane-empty">等待该模型开始工作</div>}
+    </article>
+  );
+}
+
 function combinedStatus(items) {
   if (items.some((item) => item.status === "failed")) return "failed";
   if (items.some((item) => item.status === "running")) return "running";
@@ -51,7 +182,10 @@ function eventResearchDetail(step) {
 
 function buildFlowSteps(events, active = false, taskStatus = "", taskError = "") {
   const steps = latestByStep(
-    (events || []).filter((event) => !["chapter_preview", "chapter_preview_reset"].includes(event.event_type))
+    (events || []).filter((event) => (
+      !["chapter_preview", "chapter_preview_reset"].includes(event.event_type)
+      && !thinkingEventTypes.has(event.event_type)
+    ))
   );
   if (!steps.length) {
     return [{ key: "waiting", title: "等待生成任务", status: "pending", detail: "尚未开始" }];
@@ -323,11 +457,17 @@ export default function TaskExecutionPanel({
   const [chapterSelection, setChapterSelection] = useState("latest");
   const [followPreviewTail, setFollowPreviewTail] = useState(true);
   const [showInlineDiff, setShowInlineDiff] = useState(true);
+  const [thinkingOpen, setThinkingOpen] = useState(false);
+  const [thinkingDismissed, setThinkingDismissed] = useState(false);
   const flowScrollRef = useRef(null);
   const previewContentRef = useRef(null);
   const flowSteps = useMemo(
     () => buildFlowSteps(events, active, taskStatus, taskError),
     [active, events, taskError, taskStatus]
+  );
+  const thinkingActivity = useMemo(() => collectThinkingStreams(events), [events]);
+  const hasThinkingStreams = Boolean(
+    thinkingActivity.writer.length || thinkingActivity.reviewer.length
   );
   const currentFlowKey = (
     flowSteps.find((step) => step.status === "failed")
@@ -383,6 +523,17 @@ export default function TaskExecutionPanel({
   }, [selectedChapterIndex]);
 
   useEffect(() => {
+    if (!events.length) {
+      setThinkingOpen(false);
+      setThinkingDismissed(false);
+      return;
+    }
+    if (active && thinkingActivity.hasRunning && !thinkingDismissed) {
+      setThinkingOpen(true);
+    }
+  }, [active, events.length, thinkingActivity.hasRunning, thinkingActivity.latestSequence, thinkingDismissed]);
+
+  useEffect(() => {
     const container = flowScrollRef.current;
     const currentNode = container?.querySelector(`[data-flow-key="${currentFlowKey}"]`);
     if (!container || !currentNode) return;
@@ -430,7 +581,6 @@ export default function TaskExecutionPanel({
       <div className="panel-header execution-console-header">
         <div>
           <div className="panel-title">实时执行控制台</div>
-          <div className="panel-subtitle">只显示当前流程、正文和对应章节的局部修改。</div>
         </div>
         <div className="execution-live-status">
           {lastUpdateAt ? <small>更新于 {lastUpdateAt.toLocaleTimeString("zh-CN", { hour12: false })}</small> : null}
@@ -512,6 +662,37 @@ export default function TaskExecutionPanel({
           })}
         </div>
       </div>
+
+      {hasThinkingStreams ? (
+        <section className={`execution-thinking-dock ${thinkingOpen ? "open" : "collapsed"}`}>
+          <button
+            type="button"
+            className="execution-thinking-toggle"
+            aria-expanded={thinkingOpen}
+            onClick={() => {
+              const nextOpen = !thinkingOpen;
+              setThinkingOpen(nextOpen);
+              setThinkingDismissed(!nextOpen);
+            }}
+          >
+            <span>
+              <strong>模型实时思考</strong>
+              <small>生成与审校可并行查看</small>
+            </span>
+            <span className="execution-thinking-summary">
+              {thinkingActivity.hasRunning ? <i aria-hidden="true" /> : null}
+              {thinkingActivity.hasRunning ? "正在更新" : "本次记录"}
+              <b>{thinkingOpen ? "收起" : "展开"}</b>
+            </span>
+          </button>
+          {thinkingOpen ? (
+            <div className="execution-thinking-grid">
+              <ThinkingLane role="writer" streams={thinkingActivity.writer} />
+              <ThinkingLane role="reviewer" streams={thinkingActivity.reviewer} />
+            </div>
+          ) : null}
+        </section>
+      ) : null}
 
       <div className="panel-body execution-grid">
         <div className="execution-preview">

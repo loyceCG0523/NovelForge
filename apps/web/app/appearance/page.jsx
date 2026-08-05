@@ -67,7 +67,6 @@ export default function AppearancePage() {
   return (
     <AppShell
       title="外观设置"
-      subtitle="为写作、阅读和灵感选择最合适的界面气质"
       actions={<span className="appearance-current-pill"><i />正在使用 {currentTheme.name}</span>}
     >
       <section className="appearance-hero">

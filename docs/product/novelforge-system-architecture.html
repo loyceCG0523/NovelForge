@@ -1,0 +1,1500 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="referrer" content="no-referrer">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'unsafe-inline' 'unsafe-eval' 'wasm-unsafe-eval' blob: data: https://cdnjs.cloudflare.com https://cdn.jsdelivr.net https://esm.sh https://fonts.bunny.net https://fonts.googleapis.com https://fonts.gstatic.com https://unpkg.com; style-src 'unsafe-inline' blob: data: https://cdnjs.cloudflare.com https://cdn.jsdelivr.net https://esm.sh https://fonts.bunny.net https://fonts.googleapis.com https://fonts.gstatic.com https://unpkg.com; img-src blob: data: https://cdnjs.cloudflare.com https://cdn.jsdelivr.net https://esm.sh https://fonts.bunny.net https://fonts.googleapis.com https://fonts.gstatic.com https://unpkg.com; font-src blob: data: https://cdnjs.cloudflare.com https://cdn.jsdelivr.net https://esm.sh https://fonts.bunny.net https://fonts.googleapis.com https://fonts.gstatic.com https://unpkg.com; media-src blob: data: https://cdnjs.cloudflare.com https://cdn.jsdelivr.net https://esm.sh https://fonts.bunny.net https://fonts.googleapis.com https://fonts.gstatic.com https://unpkg.com; worker-src blob:; connect-src blob: data:; frame-src 'self'; object-src 'none'; base-uri 'none'; form-action 'none'">
+<title>Novelforge System Map</title>
+<style>:root{color-scheme:light dark;background:light-dark(rgb(255 255 255), rgb(24 24 24))}html,body{margin:0}body{box-sizing:border-box;padding:1rem;background:inherit}iframe{display:block;width:100%;max-width:736px;height:calc(100vh - 2rem);margin:0 auto;border:0}</style>
+</head>
+<body>
+<iframe sandbox="allow-scripts" referrerpolicy="no-referrer" title="Novelforge System Map" srcdoc="&lt;!doctype html&gt;
+&lt;html lang=&quot;en&quot;&gt;
+&lt;head&gt;
+&lt;meta charset=&quot;utf-8&quot;&gt;
+&lt;meta name=&quot;viewport&quot; content=&quot;width=device-width, initial-scale=1&quot;&gt;
+&lt;meta name=&quot;referrer&quot; content=&quot;no-referrer&quot;&gt;
+&lt;meta http-equiv=&quot;Content-Security-Policy&quot; content=&quot;default-src &#x27;none&#x27;; script-src &#x27;unsafe-inline&#x27; &#x27;unsafe-eval&#x27; &#x27;wasm-unsafe-eval&#x27; blob: data: https://cdnjs.cloudflare.com https://cdn.jsdelivr.net https://esm.sh https://fonts.bunny.net https://fonts.googleapis.com https://fonts.gstatic.com https://unpkg.com; style-src &#x27;unsafe-inline&#x27; blob: data: https://cdnjs.cloudflare.com https://cdn.jsdelivr.net https://esm.sh https://fonts.bunny.net https://fonts.googleapis.com https://fonts.gstatic.com https://unpkg.com; img-src blob: data: https://cdnjs.cloudflare.com https://cdn.jsdelivr.net https://esm.sh https://fonts.bunny.net https://fonts.googleapis.com https://fonts.gstatic.com https://unpkg.com; font-src blob: data: https://cdnjs.cloudflare.com https://cdn.jsdelivr.net https://esm.sh https://fonts.bunny.net https://fonts.googleapis.com https://fonts.gstatic.com https://unpkg.com; media-src blob: data: https://cdnjs.cloudflare.com https://cdn.jsdelivr.net https://esm.sh https://fonts.bunny.net https://fonts.googleapis.com https://fonts.gstatic.com https://unpkg.com; worker-src blob:; connect-src blob: data:; frame-src &#x27;none&#x27;; object-src &#x27;none&#x27;; base-uri &#x27;none&#x27;; form-action &#x27;none&#x27;&quot;&gt;
+&lt;title&gt;Novelforge System Map&lt;/title&gt;
+&lt;style&gt;:root {
+  color-scheme: light dark;
+  background-color: var(--background) !important;
+
+  /* Agent-facing contract; keep in sync with SKILL.md. */
+  --background: light-dark(rgb(255 255 255), rgb(24 24 24));
+  --foreground: light-dark(rgb(26 28 31), rgb(255 255 255));
+  --card: color-mix(in oklab, var(--foreground) 5%, transparent);
+  --card-foreground: var(--foreground);
+  --popover: light-dark(rgb(255 255 255), rgb(45 45 45));
+  --popover-foreground: var(--foreground);
+  --primary: light-dark(rgb(51 156 255), rgb(131 195 255));
+  --primary-foreground: light-dark(rgb(255 255 255), rgb(13 13 13));
+  --secondary: light-dark(rgb(255 255 255 / 96%), rgb(54 54 54 / 96%));
+  --secondary-foreground: var(--foreground);
+  --muted: color-mix(in srgb, var(--foreground) 10%, transparent);
+  --muted-foreground: light-dark(
+    rgb(26 28 31 / 49.4%),
+    rgb(255 255 255 / 49.8%)
+  );
+  --accent: light-dark(rgb(229 242 255), rgb(13 39 63));
+  --accent-foreground: var(--primary);
+  --destructive: light-dark(rgb(226 85 7), rgb(255 133 73));
+  --border: light-dark(rgb(26 28 31 / 8%), rgb(255 255 255 / 8.2%));
+  --input: light-dark(
+    rgb(26 28 31 / 11.8%),
+    color-mix(in oklab, rgb(0 0 0) 10%, transparent)
+  );
+  --ring: light-dark(rgb(51 156 255), rgb(131 195 255 / 76%));
+  --font-size-base: 14px;
+  --viz-series-1: var(--primary);
+  --viz-series-2: light-dark(rgb(243 136 59), rgb(245 154 86));
+  --viz-series-3: light-dark(rgb(93 201 119), rgb(116 213 139));
+  --viz-series-4: light-dark(rgb(235 119 177), rgb(240 143 192));
+  --viz-series-5: light-dark(rgb(155 121 236), rgb(170 145 239));
+  --viz-series-6: light-dark(rgb(58 185 177), rgb(90 203 194));
+
+  /* Internal implementation variables; not part of the agent contract. */
+  --font-sans: -apple-system, system-ui, &quot;Segoe UI&quot;, sans-serif;
+  --font-mono:
+    ui-monospace, SFMono-Regular, &quot;SF Mono&quot;, Menlo, Consolas, &quot;Liberation Mono&quot;,
+    monospace;
+  --font-size-normal: max(11px, var(--font-size-base));
+  --font-size-tooltip: calc(var(--font-size-base) - 1px);
+  --font-size-small: max(11px, calc(var(--font-size-base) - 2px));
+  --font-size-h1: calc(var(--font-size-normal) * 1.7142857143);
+  --font-size-h2: calc(var(--font-size-normal) * 1.4285714286);
+  --font-size-h3: calc(var(--font-size-normal) * 1.2857142857);
+  --font-weight-normal: 430;
+  --font-weight-medium: 500;
+  --line-height-normal: calc(var(--font-size-normal) * 1.5);
+  --line-height-tooltip: calc(var(--font-size-tooltip) * 1.4285714286);
+  --line-height-small: calc(var(--font-size-small) + 4px);
+  --radius: 12.5px;
+  --radius-sm: calc(var(--radius) * 0.6);
+  --radius-md: calc(var(--radius) * 0.8);
+  --radius-lg: var(--radius);
+  --radius-2xl: calc(var(--radius) * 1.6);
+  --radius-full: 9999px;
+  --shadow-sm: 0 1px 2px -1px rgb(0 0 0 / 8%);
+  --checkmark-image: url(&quot;data:image/svg+xml,%3Csvg xmlns=&#x27;http://www.w3.org/2000/svg&#x27; viewBox=&#x27;0 0 17 17&#x27;%3E%3Cpath d=&#x27;M12.8961 3.64101C13.1297 3.41418 13.4984 3.37523 13.7779 3.56581C14.0571 3.75635 14.1554 4.11331 14.0299 4.41347L13.9615 4.53847L7.71151 13.7045C7.59411 13.8767 7.4063 13.9877 7.19881 14.0072C6.99136 14.0267 6.78564 13.9533 6.63826 13.806L2.88826 10.056L2.79842 9.9457C2.6192 9.67407 2.64927 9.30496 2.88826 9.06581C3.12738 8.82669 3.49647 8.79676 3.76815 8.97597L3.8785 9.06581L7.03084 12.2182L12.8053 3.74941L12.8961 3.64101Z&#x27;/%3E%3C/svg%3E&quot;);
+
+  /* Legacy aliases; not part of the current agent contract. */
+  --viz-bg: transparent;
+  --viz-panel: var(--card);
+  --viz-border: var(--border);
+  --viz-text: var(--foreground);
+  --viz-muted: var(--muted-foreground);
+  --viz-accent: var(--primary);
+  --viz-accent-text: var(--primary-foreground);
+  --viz-accent-bg: var(--accent);
+  --viz-font-size: var(--font-size-base);
+  --viz-warning: var(--destructive);
+  --color-background-primary: var(--background);
+  --color-text-primary: var(--foreground);
+  --color-border-secondary: var(--border);
+}
+
+:root[data-theme=&quot;light&quot;] {
+  color-scheme: light;
+}
+
+:root[data-theme=&quot;dark&quot;] {
+  color-scheme: dark;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html &gt; body {
+  margin: 0;
+  padding: 5px;
+  color: var(--foreground);
+  background: transparent !important;
+  font-family: var(--font-sans);
+  font-size: var(--font-size-normal);
+  font-weight: var(--font-weight-normal);
+  line-height: var(--line-height-normal);
+}
+
+a {
+  color: color-mix(in srgb, var(--viz-accent) 80%, var(--viz-text) 20%);
+  cursor: pointer;
+  font-weight: var(--viz-font-weight-medium);
+  text-decoration: none;
+  text-underline-offset: 2px;
+}
+
+a:is(:hover, :focus-visible) {
+  text-decoration-line: underline;
+  text-decoration-style: dashed;
+  text-decoration-thickness: 0.5px;
+}
+
+h1,
+h2,
+h3,
+h4,
+h5,
+h6,
+p {
+  margin-block: 0;
+}
+
+h1 {
+  font-size: var(--font-size-h1);
+  font-weight: var(--font-weight-medium);
+  line-height: 1.25;
+}
+
+h2 {
+  font-size: var(--font-size-h2);
+  font-weight: var(--font-weight-medium);
+  line-height: 1.25;
+}
+
+h3,
+h4,
+h5,
+h6 {
+  font-size: var(--font-size-h3);
+  font-weight: var(--font-weight-medium);
+  line-height: 1.3;
+}
+
+b,
+strong,
+th {
+  font-weight: var(--font-weight-medium);
+}
+
+code:not(pre code) {
+  display: inline;
+  padding: 1px 6px;
+  border-radius: var(--radius-sm);
+  corner-shape: superellipse(1.5);
+  background: var(--muted);
+  font-family: var(--font-mono);
+  font-size: 0.92em;
+  overflow-wrap: anywhere;
+  -webkit-box-decoration-break: clone;
+  box-decoration-break: clone;
+  word-break: break-word;
+}
+
+#widget {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  width: 100%;
+  padding: 0;
+  background: transparent !important;
+}
+
+.card {
+  min-width: 0;
+  padding: 12px;
+  overflow: hidden;
+  overflow-wrap: break-word;
+  border-radius: var(--radius-2xl);
+  corner-shape: superellipse(1.5);
+  color: var(--card-foreground);
+  background: var(--card);
+}
+
+#widget &gt; :not(.card) {
+  width: 100% !important;
+  max-width: none !important;
+  margin: 0 !important;
+  padding: 0 !important;
+  border: 0 !important;
+  border-radius: 0 !important;
+  background: transparent !important;
+  box-shadow: none !important;
+}
+
+.tooltip {
+  position: fixed;
+  z-index: 50;
+  top: 0;
+  left: 0;
+  width: max-content;
+  max-width: min(
+    20rem,
+    var(--tooltip-available-width, calc(100vw - 10px)),
+    calc(100vw - 10px)
+  );
+  max-height: min(
+    var(--tooltip-available-height, calc(100vh - 10px)),
+    calc(100vh - 10px)
+  );
+  padding: 4px 8px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  corner-shape: superellipse(1.5);
+  color: var(--popover-foreground);
+  background: var(--popover);
+  box-shadow: none;
+  font-size: var(--font-size-tooltip);
+  line-height: var(--line-height-tooltip);
+  overflow-wrap: break-word;
+  white-space: normal;
+  pointer-events: none;
+  user-select: none;
+}
+
+.viz-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(max(180px, 24%), 1fr));
+  gap: 10px;
+}
+
+.viz-stat {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.viz-stat-value {
+  font-size: var(--font-size-h2);
+  font-weight: var(--font-weight-medium);
+  line-height: 1.25;
+}
+
+.viz-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
+}
+
+.viz-badge {
+  padding: 3px 8px;
+  border-radius: var(--radius-full);
+  color: var(--accent-foreground);
+  background: var(--accent);
+  font-weight: var(--font-weight-medium);
+}
+
+small,
+.text-small,
+.viz-badge {
+  font-size: var(--font-size-small);
+  line-height: var(--line-height-small);
+}
+
+.text-muted {
+  color: var(--muted-foreground);
+}
+
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+.viz-controls {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+
+.viz-controls &gt; .form-label {
+  display: grid;
+  min-width: min(100%, 260px);
+  flex: 1 1 280px;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: baseline;
+  gap: 2px 12px;
+  margin-bottom: 0;
+}
+
+.viz-controls &gt; .form-label &gt; :is(.form-control, .form-range, .form-select) {
+  grid-column: 1 / -1;
+}
+
+.btn,
+.form-check-input,
+.form-control,
+.form-range,
+.form-select {
+  font: inherit;
+}
+
+.btn {
+  appearance: button;
+  display: inline-flex;
+  inline-size: fit-content;
+  max-inline-size: 100%;
+  min-height: 28px;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  margin: 0;
+  padding: 0 8px;
+  -webkit-app-region: no-drag;
+  border: 1px solid var(--input);
+  border-radius: var(--radius-lg);
+  corner-shape: superellipse(1.5);
+  color: var(--secondary-foreground);
+  background: var(--secondary);
+  cursor: var(--cursor-interaction, pointer);
+  text-align: center;
+  text-decoration: none;
+  white-space: nowrap;
+  user-select: none;
+  -webkit-font-smoothing: antialiased;
+}
+
+.btn:is(.btn-block, .viz-tile) {
+  inline-size: 100%;
+}
+
+.btn.viz-tile {
+  min-width: 0;
+  overflow-wrap: anywhere;
+  white-space: normal;
+}
+
+a.btn {
+  cursor: pointer;
+  text-decoration: none;
+}
+
+.btn:not(:disabled):hover {
+  background: color-mix(in srgb, var(--foreground) 6%, var(--secondary));
+}
+
+.btn-primary {
+  border-color: transparent;
+  color: var(--primary-foreground);
+  background: var(--foreground);
+  background-clip: padding-box;
+}
+
+.btn-primary .text-muted {
+  color: color-mix(in srgb, var(--primary-foreground) 50%, transparent);
+}
+
+.btn-primary:not(:disabled):hover {
+  background: color-mix(in srgb, var(--foreground) 80%, transparent);
+  background-clip: padding-box;
+}
+
+.btn-ghost {
+  border-color: transparent;
+  color: var(--muted-foreground);
+  background: transparent;
+}
+
+.btn-ghost:not(:disabled):hover {
+  color: var(--foreground);
+  background: color-mix(in srgb, var(--foreground) 6%, var(--secondary));
+}
+
+.btn:disabled {
+  cursor: not-allowed;
+  opacity: 0.4;
+}
+
+[data-lucide] {
+  stroke-width: 1.6;
+}
+
+.form-label {
+  display: block;
+  margin-bottom: 6px;
+  color: var(--foreground);
+}
+
+.form-control {
+  display: block;
+  width: 100%;
+  min-height: 28px;
+  padding: 0 8px;
+  outline: none;
+  border: 1px solid var(--input);
+  border-radius: var(--radius-lg);
+  corner-shape: superellipse(1.5);
+  color: var(--foreground);
+  background: var(--secondary);
+}
+
+.form-control::placeholder {
+  color: var(--muted-foreground);
+}
+
+.form-control[type=&quot;file&quot;] {
+  padding: 0;
+  overflow: hidden;
+  cursor: var(--cursor-interaction, pointer);
+}
+
+.form-control[type=&quot;file&quot;]::file-selector-button {
+  min-height: 26px;
+  margin-right: 8px;
+  padding: 0 8px;
+  border: 0;
+  border-right: 1px solid var(--input);
+  color: var(--secondary-foreground);
+  background: var(--secondary);
+  cursor: inherit;
+  font: inherit;
+}
+
+.form-control[type=&quot;file&quot;]:not(:disabled):hover::file-selector-button {
+  background: color-mix(in srgb, var(--foreground) 6%, var(--secondary));
+}
+
+.form-control-color[type=&quot;color&quot;] {
+  width: 40px;
+  height: 28px;
+  padding: 3px;
+  cursor: var(--cursor-interaction, pointer);
+}
+
+.form-control-color[type=&quot;color&quot;]::-webkit-color-swatch-wrapper {
+  padding: 0;
+}
+
+.form-control-color[type=&quot;color&quot;]::-webkit-color-swatch {
+  border: 0;
+  border-radius: calc(var(--radius-lg) - 4px);
+  corner-shape: superellipse(1.5);
+}
+
+textarea.form-control {
+  height: auto;
+  min-height: 72px;
+  padding: 8px 10px;
+  resize: vertical;
+}
+
+.form-control:focus-visible {
+  border-color: var(--ring);
+  box-shadow: inset 0 0 0 1px var(--ring);
+}
+
+.form-control:disabled,
+.form-select:disabled {
+  cursor: not-allowed;
+  opacity: 0.4;
+}
+
+.form-select {
+  appearance: none;
+  display: block;
+  width: 100%;
+  min-height: 28px;
+  margin: 0;
+  padding: 0 32px 0 8px;
+  outline: none;
+  border: 1px solid var(--input);
+  border-radius: var(--radius-lg);
+  corner-shape: superellipse(1.5);
+  color: var(--foreground);
+  background-color: var(--secondary);
+  background-image:
+    linear-gradient(45deg, transparent 50%, var(--muted-foreground) 50%),
+    linear-gradient(135deg, var(--muted-foreground) 50%, transparent 50%);
+  background-position:
+    calc(100% - 14px) 50%,
+    calc(100% - 10px) 50%;
+  background-repeat: no-repeat;
+  background-size: 4px 4px;
+  cursor: var(--cursor-interaction, default);
+}
+
+.form-select:not(:disabled):hover {
+  background-color: color-mix(in srgb, var(--foreground) 6%, var(--secondary));
+}
+
+.form-select:focus-visible {
+  border-color: var(--ring);
+  box-shadow: inset 0 0 0 1px var(--ring);
+}
+
+.form-check {
+  display: flex;
+  min-height: 20px;
+  align-items: center;
+  gap: 6px;
+}
+
+.form-check-input {
+  appearance: none;
+  width: 14px;
+  height: 14px;
+  flex: 0 0 auto;
+  margin: 0;
+  border: 1px solid var(--input);
+  color: var(--primary-foreground);
+  background-color: transparent;
+  cursor: var(--cursor-interaction, default);
+  transition:
+    background-color 150ms,
+    border-color 150ms,
+    box-shadow 150ms;
+}
+
+.form-check:not(.form-switch) .form-check-input[type=&quot;checkbox&quot;] {
+  border-color: var(--input);
+  border-radius: var(--radius-sm);
+  corner-shape: superellipse(1.5);
+  background-color: var(--secondary);
+  box-shadow: var(--shadow-sm);
+}
+
+.form-check:not(.form-switch)
+  .form-check-input:not(:disabled):not(:checked):hover {
+  background-color: var(--card);
+}
+
+.form-check:not(.form-switch) .form-check-input[type=&quot;checkbox&quot;]:checked {
+  border-color: var(--primary);
+  background-color: var(--primary);
+}
+
+.form-check:not(.form-switch)
+  .form-check-input[type=&quot;checkbox&quot;]:checked::before {
+  display: block;
+  width: 100%;
+  height: 100%;
+  background: var(--primary-foreground);
+  content: &quot;&quot;;
+  mask: var(--checkmark-image) center / 12px 12px no-repeat;
+}
+
+.form-check-input[type=&quot;radio&quot;] {
+  width: 14px;
+  height: 14px;
+  border-radius: var(--radius-full);
+}
+
+.form-check-input[type=&quot;radio&quot;]:checked {
+  border: 2px solid var(--primary);
+  background:
+    radial-gradient(circle, var(--primary-foreground) 0 2.5px, transparent 3px),
+    var(--primary);
+}
+
+.form-check:not(.form-switch) .form-check-input:focus-visible {
+  outline: 2px solid var(--ring);
+  outline-offset: 2px;
+}
+
+.form-check:not(.form-switch) .form-check-input:disabled {
+  cursor: not-allowed;
+  pointer-events: none;
+}
+
+.form-check:not(.form-switch) .form-check-input:disabled + .form-check-label {
+  cursor: not-allowed;
+}
+
+.form-switch .form-check-input:disabled,
+.form-switch .form-check-input:disabled + .form-check-label {
+  cursor: not-allowed;
+  opacity: 0.6;
+}
+
+.form-check-label {
+  color: var(--foreground);
+  cursor: var(--cursor-interaction, default);
+}
+
+.form-switch .form-check-input {
+  position: relative;
+  width: 32px;
+  height: 20px;
+  border: 0;
+  border-radius: var(--radius-full);
+  background: var(--muted);
+  box-shadow: none;
+  transition: background-color 200ms cubic-bezier(0, 0, 0.2, 1);
+}
+
+.form-switch .form-check-input::before {
+  position: absolute;
+  top: 50%;
+  left: 0;
+  width: 16px;
+  height: 16px;
+  box-sizing: border-box;
+  border: 1px solid light-dark(var(--primary-foreground), var(--foreground));
+  border-radius: var(--radius-full);
+  background: light-dark(var(--primary-foreground), var(--foreground));
+  box-shadow: var(--shadow-sm);
+  content: &quot;&quot;;
+  transform: translate(2px, -50%);
+  transition: transform 200ms cubic-bezier(0, 0, 0.2, 1);
+}
+
+.form-switch .form-check-input:checked {
+  background: var(--primary);
+}
+
+.form-switch .form-check-input:checked::before {
+  transform: translate(14px, -50%);
+}
+
+.form-switch .form-check-input:focus-visible {
+  box-shadow: 0 0 0 2px var(--ring);
+}
+
+.form-range {
+  appearance: none;
+  display: block;
+  width: 100%;
+  height: 28px;
+  flex: 1;
+  margin: 0;
+  padding: 0;
+  outline: none;
+  border: 0;
+  accent-color: var(--primary);
+  background: linear-gradient(
+      color-mix(in srgb, var(--foreground) 7%, transparent),
+      color-mix(in srgb, var(--foreground) 7%, transparent)
+    )
+    center / 100% 2px no-repeat;
+}
+
+.form-range::-webkit-slider-runnable-track {
+  height: 28px;
+  background: transparent;
+}
+
+.form-range::-webkit-slider-thumb {
+  appearance: none;
+  width: 20px;
+  height: 20px;
+  margin-top: 4px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-full);
+  background: light-dark(var(--primary-foreground), var(--foreground));
+}
+
+.form-range:focus-visible::-webkit-slider-thumb {
+  border-color: var(--ring);
+  box-shadow: inset 0 0 0 1px var(--ring);
+}
+
+.form-range::-moz-range-track {
+  height: 28px;
+  background: transparent;
+}
+
+.form-range::-moz-range-thumb {
+  width: 20px;
+  height: 20px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-full);
+  background: light-dark(var(--primary-foreground), var(--foreground));
+}
+
+.form-range:focus-visible::-moz-range-thumb {
+  border-color: var(--ring);
+  box-shadow: inset 0 0 0 1px var(--ring);
+}
+
+.form-range:disabled {
+  cursor: not-allowed;
+  opacity: 0.4;
+}
+
+.btn:not(.btn-primary, .viz-tile):is(
+    [aria-pressed=&quot;true&quot;],
+    [aria-selected=&quot;true&quot;],
+    .is-selected
+  ) {
+  border-color: var(--primary);
+  color: var(--primary-foreground);
+  background: var(--primary);
+}
+
+.btn.viz-tile:is([aria-pressed=&quot;true&quot;], [aria-selected=&quot;true&quot;], .is-selected) {
+  border-color: var(--primary);
+  box-shadow: inset 0 0 0 1px var(--primary);
+}
+
+.btn:focus-visible {
+  outline: 2px solid var(--ring);
+  outline-offset: 2px;
+}
+
+svg {
+  display: block;
+  max-width: 100%;
+  height: auto;
+}
+
+#widget &gt; svg {
+  width: 100%;
+}
+
+.text-warning,
+.text-destructive {
+  color: var(--destructive);
+}
+
+html&gt;body{padding:0}&lt;/style&gt;
+&lt;/head&gt;
+&lt;body&gt;
+&lt;section id=&quot;novelforge-system-map&quot; aria-label=&quot;NovelForge 技术架构与数据流&quot;&gt;
+  &lt;style&gt;
+    #novelforge-system-map {
+      --nf-gap: 12px;
+      color: var(--foreground);
+      display: grid;
+      gap: 16px;
+      min-width: 0;
+      width: 100%;
+    }
+    #novelforge-system-map .nf-heading {
+      display: flex;
+      align-items: flex-start;
+      justify-content: space-between;
+      gap: var(--nf-gap);
+      flex-wrap: wrap;
+    }
+    #novelforge-system-map .nf-heading-copy {
+      display: grid;
+      gap: 4px;
+      max-width: 760px;
+    }
+    #novelforge-system-map .nf-heading-copy strong {
+      font-weight: 500;
+    }
+    #novelforge-system-map .nf-view-title {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+    #novelforge-system-map .nf-stage {
+      position: relative;
+      width: 100%;
+    }
+    #novelforge-system-map .nf-diagram {
+      display: block;
+      width: 100%;
+      height: auto;
+      min-height: 360px;
+    }
+    #novelforge-system-map .nf-lane {
+      fill: color-mix(in srgb, var(--muted) 45%, transparent);
+    }
+    #novelforge-system-map .nf-lane-label,
+    #novelforge-system-map .nf-edge-label,
+    #novelforge-system-map .nf-node-subtitle {
+      fill: var(--muted-foreground);
+      font-size: calc(var(--font-size-base) * 0.72);
+    }
+    #novelforge-system-map .nf-node-title {
+      fill: var(--foreground);
+      font-size: calc(var(--font-size-base) * 0.8);
+      font-weight: 500;
+    }
+    #novelforge-system-map .nf-node-box {
+      stroke: color-mix(in srgb, var(--border) 86%, transparent);
+      stroke-width: 1.25;
+    }
+    #novelforge-system-map .nf-node[data-kind=&quot;frontend&quot;] .nf-node-box {
+      fill: color-mix(in srgb, var(--viz-series-1) 13%, var(--card));
+    }
+    #novelforge-system-map .nf-node[data-kind=&quot;api&quot;] .nf-node-box {
+      fill: color-mix(in srgb, var(--viz-series-2) 13%, var(--card));
+    }
+    #novelforge-system-map .nf-node[data-kind=&quot;worker&quot;] .nf-node-box {
+      fill: color-mix(in srgb, var(--viz-series-3) 13%, var(--card));
+    }
+    #novelforge-system-map .nf-node[data-kind=&quot;data&quot;] .nf-node-box {
+      fill: color-mix(in srgb, var(--viz-series-4) 13%, var(--card));
+    }
+    #novelforge-system-map .nf-node[data-kind=&quot;external&quot;] .nf-node-box {
+      fill: color-mix(in srgb, var(--viz-series-5) 13%, var(--card));
+    }
+    #novelforge-system-map .nf-node[data-kind=&quot;guard&quot;] .nf-node-box {
+      fill: color-mix(in srgb, var(--viz-series-6) 13%, var(--card));
+    }
+    #novelforge-system-map .nf-node.is-selected .nf-node-box {
+      stroke: var(--primary);
+      stroke-width: 2.25;
+    }
+    #novelforge-system-map .nf-edge {
+      fill: none;
+      stroke: var(--border);
+      stroke-width: 1.6;
+      marker-end: url(#nf-arrow-neutral);
+    }
+    #novelforge-system-map .nf-edge[data-kind=&quot;sync&quot;] {
+      stroke: var(--viz-series-1);
+      marker-end: url(#nf-arrow-sync);
+    }
+    #novelforge-system-map .nf-edge[data-kind=&quot;async&quot;] {
+      stroke: var(--viz-series-2);
+      stroke-dasharray: 7 5;
+      marker-end: url(#nf-arrow-async);
+    }
+    #novelforge-system-map .nf-edge[data-kind=&quot;semantic&quot;] {
+      stroke: var(--viz-series-3);
+      stroke-dasharray: 2 4;
+      marker-end: url(#nf-arrow-semantic);
+    }
+    #novelforge-system-map .nf-edge[data-kind=&quot;control&quot;] {
+      stroke: var(--viz-series-6);
+      marker-end: url(#nf-arrow-control);
+    }
+    #novelforge-system-map .nf-detail {
+      display: grid;
+      gap: 12px;
+    }
+    #novelforge-system-map .nf-detail-head {
+      align-items: flex-start;
+      justify-content: space-between;
+    }
+    #novelforge-system-map .nf-detail-copy {
+      display: grid;
+      flex: 1 1 260px;
+      gap: 3px;
+      min-width: 0;
+    }
+    #novelforge-system-map .nf-view-buttons {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      min-width: 0;
+      width: 100%;
+    }
+    #novelforge-system-map .nf-detail-copy strong {
+      font-weight: 500;
+    }
+    #novelforge-system-map .nf-detail-grid {
+      display: grid;
+      grid-template-columns: minmax(0, 1.5fr) minmax(0, 1fr);
+      gap: 16px;
+    }
+    #novelforge-system-map .nf-detail-grid ul {
+      margin: 6px 0 0;
+      padding-left: 20px;
+    }
+    #novelforge-system-map .nf-detail-grid p {
+      margin: 6px 0 0;
+    }
+    #novelforge-system-map .nf-legend {
+      display: flex;
+      gap: 14px;
+      align-items: center;
+      flex-wrap: wrap;
+    }
+    #novelforge-system-map .nf-legend-item {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+    }
+    #novelforge-system-map .nf-legend-line {
+      width: 24px;
+      border-top: 2px solid var(--viz-series-1);
+    }
+    #novelforge-system-map .nf-legend-line.is-async {
+      border-color: var(--viz-series-2);
+      border-top-style: dashed;
+    }
+    #novelforge-system-map .nf-legend-line.is-semantic {
+      border-color: var(--viz-series-3);
+      border-top-style: dotted;
+    }
+    #novelforge-system-map .nf-legend-line.is-control {
+      border-color: var(--viz-series-6);
+    }
+    #novelforge-system-map .nf-mobile-flow {
+      display: none;
+      margin: 0;
+      padding-left: 22px;
+    }
+    #novelforge-system-map .nf-mobile-flow li {
+      margin: 0 0 10px;
+    }
+    @media (max-width: 520px) {
+      #novelforge-system-map .nf-diagram {
+        display: none;
+      }
+      #novelforge-system-map .nf-mobile-flow {
+        display: block;
+      }
+      #novelforge-system-map .nf-detail-grid {
+        grid-template-columns: 1fr;
+      }
+      #novelforge-system-map .nf-controls-select {
+        width: 100%;
+      }
+    }
+  &lt;/style&gt;
+
+  &lt;div class=&quot;nf-heading&quot;&gt;
+    &lt;div class=&quot;nf-heading-copy&quot;&gt;
+      &lt;div class=&quot;nf-view-title&quot;&gt;
+        &lt;i data-lucide=&quot;workflow&quot; aria-hidden=&quot;true&quot;&gt;&lt;/i&gt;
+        &lt;strong id=&quot;nf-view-title&quot;&gt;全景架构&lt;/strong&gt;
+      &lt;/div&gt;
+      &lt;span id=&quot;nf-view-summary&quot; class=&quot;text-muted&quot;&gt;从创作界面到 Agent、模型与三类基础设施的整体关系。&lt;/span&gt;
+    &lt;/div&gt;
+    &lt;span class=&quot;viz-badge&quot;&gt;当前实现 · 2026-08&lt;/span&gt;
+  &lt;/div&gt;
+
+  &lt;div class=&quot;viz-controls&quot; aria-label=&quot;切换系统视图&quot;&gt;
+    &lt;div class=&quot;nf-view-buttons&quot; role=&quot;group&quot; aria-label=&quot;架构视图&quot;&gt;
+      &lt;button class=&quot;btn btn-primary&quot; type=&quot;button&quot; data-view=&quot;overview&quot; aria-pressed=&quot;true&quot;&gt;全景架构&lt;/button&gt;
+      &lt;button class=&quot;btn&quot; type=&quot;button&quot; data-view=&quot;generation&quot; aria-pressed=&quot;false&quot;&gt;小说生产&lt;/button&gt;
+      &lt;button class=&quot;btn&quot; type=&quot;button&quot; data-view=&quot;collaboration&quot; aria-pressed=&quot;false&quot;&gt;样本协作&lt;/button&gt;
+      &lt;button class=&quot;btn&quot; type=&quot;button&quot; data-view=&quot;retrieval&quot; aria-pressed=&quot;false&quot;&gt;检索注入&lt;/button&gt;
+      &lt;button class=&quot;btn&quot; type=&quot;button&quot; data-view=&quot;reliability&quot; aria-pressed=&quot;false&quot;&gt;任务与可靠性&lt;/button&gt;
+    &lt;/div&gt;
+    &lt;label class=&quot;form-label nf-controls-select&quot; for=&quot;nf-node-select&quot;&gt;
+      查看组件
+      &lt;select class=&quot;form-select&quot; id=&quot;nf-node-select&quot;&gt;&lt;/select&gt;
+    &lt;/label&gt;
+  &lt;/div&gt;
+
+  &lt;div class=&quot;nf-stage&quot;&gt;
+    &lt;svg class=&quot;nf-diagram&quot; id=&quot;nf-diagram&quot; viewBox=&quot;0 0 1200 610&quot; role=&quot;img&quot; aria-labelledby=&quot;nf-svg-title nf-svg-desc&quot;&gt;
+      &lt;title id=&quot;nf-svg-title&quot;&gt;NovelForge 全景架构&lt;/title&gt;
+      &lt;desc id=&quot;nf-svg-desc&quot;&gt;展示前端、FastAPI、Worker、模型服务以及 PostgreSQL、Redis 和 MinIO 之间的数据流。&lt;/desc&gt;
+      &lt;defs&gt;
+        &lt;marker id=&quot;nf-arrow-neutral&quot; viewBox=&quot;0 0 10 10&quot; refX=&quot;9&quot; refY=&quot;5&quot; markerWidth=&quot;6&quot; markerHeight=&quot;6&quot; orient=&quot;auto-start-reverse&quot;&gt;&lt;path d=&quot;M 0 0 L 10 5 L 0 10 z&quot; fill=&quot;var(--border)&quot;&gt;&lt;/path&gt;&lt;/marker&gt;
+        &lt;marker id=&quot;nf-arrow-sync&quot; viewBox=&quot;0 0 10 10&quot; refX=&quot;9&quot; refY=&quot;5&quot; markerWidth=&quot;6&quot; markerHeight=&quot;6&quot; orient=&quot;auto-start-reverse&quot;&gt;&lt;path d=&quot;M 0 0 L 10 5 L 0 10 z&quot; fill=&quot;var(--viz-series-1)&quot;&gt;&lt;/path&gt;&lt;/marker&gt;
+        &lt;marker id=&quot;nf-arrow-async&quot; viewBox=&quot;0 0 10 10&quot; refX=&quot;9&quot; refY=&quot;5&quot; markerWidth=&quot;6&quot; markerHeight=&quot;6&quot; orient=&quot;auto-start-reverse&quot;&gt;&lt;path d=&quot;M 0 0 L 10 5 L 0 10 z&quot; fill=&quot;var(--viz-series-2)&quot;&gt;&lt;/path&gt;&lt;/marker&gt;
+        &lt;marker id=&quot;nf-arrow-semantic&quot; viewBox=&quot;0 0 10 10&quot; refX=&quot;9&quot; refY=&quot;5&quot; markerWidth=&quot;6&quot; markerHeight=&quot;6&quot; orient=&quot;auto-start-reverse&quot;&gt;&lt;path d=&quot;M 0 0 L 10 5 L 0 10 z&quot; fill=&quot;var(--viz-series-3)&quot;&gt;&lt;/path&gt;&lt;/marker&gt;
+        &lt;marker id=&quot;nf-arrow-control&quot; viewBox=&quot;0 0 10 10&quot; refX=&quot;9&quot; refY=&quot;5&quot; markerWidth=&quot;6&quot; markerHeight=&quot;6&quot; orient=&quot;auto-start-reverse&quot;&gt;&lt;path d=&quot;M 0 0 L 10 5 L 0 10 z&quot; fill=&quot;var(--viz-series-6)&quot;&gt;&lt;/path&gt;&lt;/marker&gt;
+      &lt;/defs&gt;
+      &lt;g id=&quot;nf-lanes&quot;&gt;&lt;/g&gt;
+      &lt;g id=&quot;nf-edges&quot;&gt;&lt;/g&gt;
+      &lt;g id=&quot;nf-nodes&quot;&gt;&lt;/g&gt;
+    &lt;/svg&gt;
+    &lt;ol class=&quot;nf-mobile-flow&quot; id=&quot;nf-mobile-flow&quot; aria-label=&quot;当前数据流的移动端文字版&quot;&gt;&lt;/ol&gt;
+  &lt;/div&gt;
+
+  &lt;div class=&quot;nf-legend text-small text-muted&quot; aria-label=&quot;数据流图例&quot;&gt;
+    &lt;span class=&quot;nf-legend-item&quot;&gt;&lt;span class=&quot;nf-legend-line&quot;&gt;&lt;/span&gt;同步请求或业务数据&lt;/span&gt;
+    &lt;span class=&quot;nf-legend-item&quot;&gt;&lt;span class=&quot;nf-legend-line is-async&quot;&gt;&lt;/span&gt;异步任务或事件&lt;/span&gt;
+    &lt;span class=&quot;nf-legend-item&quot;&gt;&lt;span class=&quot;nf-legend-line is-semantic&quot;&gt;&lt;/span&gt;向量检索与知识注入&lt;/span&gt;
+    &lt;span class=&quot;nf-legend-item&quot;&gt;&lt;span class=&quot;nf-legend-line is-control&quot;&gt;&lt;/span&gt;门禁、暂停与恢复控制&lt;/span&gt;
+  &lt;/div&gt;
+
+  &lt;div class=&quot;card nf-detail&quot; aria-live=&quot;polite&quot;&gt;
+    &lt;div class=&quot;viz-row nf-detail-head&quot;&gt;
+      &lt;div class=&quot;nf-detail-copy&quot;&gt;
+        &lt;strong id=&quot;nf-detail-title&quot;&gt;&lt;/strong&gt;
+        &lt;span id=&quot;nf-detail-subtitle&quot; class=&quot;text-muted&quot;&gt;&lt;/span&gt;
+      &lt;/div&gt;
+      &lt;span class=&quot;viz-badge&quot; id=&quot;nf-detail-stack&quot;&gt;&lt;/span&gt;
+    &lt;/div&gt;
+    &lt;div class=&quot;nf-detail-grid&quot;&gt;
+      &lt;div&gt;
+        &lt;strong&gt;核心职责&lt;/strong&gt;
+        &lt;ul id=&quot;nf-detail-functions&quot;&gt;&lt;/ul&gt;
+      &lt;/div&gt;
+      &lt;div&gt;
+        &lt;strong&gt;数据与边界&lt;/strong&gt;
+        &lt;p id=&quot;nf-detail-boundary&quot; class=&quot;text-muted&quot;&gt;&lt;/p&gt;
+      &lt;/div&gt;
+    &lt;/div&gt;
+  &lt;/div&gt;
+
+  &lt;script&gt;
+    (() =&gt; {
+      const root = document.getElementById(&quot;novelforge-system-map&quot;);
+      const svgTitle = root.querySelector(&quot;#nf-svg-title&quot;);
+      const svgDesc = root.querySelector(&quot;#nf-svg-desc&quot;);
+      const lanesLayer = root.querySelector(&quot;#nf-lanes&quot;);
+      const edgesLayer = root.querySelector(&quot;#nf-edges&quot;);
+      const nodesLayer = root.querySelector(&quot;#nf-nodes&quot;);
+      const nodeSelect = root.querySelector(&quot;#nf-node-select&quot;);
+      const mobileFlow = root.querySelector(&quot;#nf-mobile-flow&quot;);
+
+      const detail = (title, subtitle, stack, functions, boundary) =&gt; ({ title, subtitle, stack, functions, boundary });
+      const node = (id, x, y, title, subtitle, kind, info, w = 190, h = 72) =&gt; ({ id, x, y, w, h, title, subtitle, kind, info });
+      const edge = (from, to, label = &quot;&quot;, kind = &quot;sync&quot;) =&gt; ({ from, to, label, kind });
+      const lane = (y, h, label) =&gt; ({ y, h, label });
+
+      const views = {
+        overview: {
+          title: &quot;全景架构&quot;,
+          summary: &quot;从创作界面到 Agent、模型与三类基础设施的整体关系。&quot;,
+          desc: &quot;Next.js 前端经 FastAPI 访问业务数据并提交异步任务，Worker 用 LangGraph 执行生成和审校，PostgreSQL、Redis、MinIO 分别承担事实数据、任务事件和大文本存储。&quot;,
+          defaultNode: &quot;api&quot;,
+          lanes: [lane(8, 110, &quot;交互层&quot;), lane(137, 205, &quot;业务与智能编排&quot;), lane(365, 190, &quot;数据与外部能力&quot;)],
+          nodes: [
+            node(&quot;user&quot;, 38, 28, &quot;创作者&quot;, &quot;配置、编辑、标注、控制&quot;, &quot;frontend&quot;, detail(&quot;创作者入口&quot;, &quot;一个账号管理作品、模型与知识资产&quot;, &quot;浏览器&quot;, [&quot;创建作品并提交起始需求&quot;, &quot;实时查看生成、审校与修订&quot;, &quot;管理检索、热梗、样本和结构化记忆&quot;], &quot;用户只能访问自己的私人数据；公共样本仍需登录并经过发布状态校验。&quot;)),
+            node(&quot;web&quot;, 270, 28, &quot;创作工作台&quot;, &quot;Next.js 16 + React&quot;, &quot;frontend&quot;, detail(&quot;Web 创作工作台&quot;, &quot;系统的交互与实时反馈层&quot;, &quot;Next.js · React&quot;, [&quot;作品、事件、章节、资料、热梗与样本协作页面&quot;, &quot;SSE 展示任务进度、模型输出与协作事件&quot;, &quot;客户端只保存展示状态，不作为业务事实源&quot;], &quot;使用 JWT 调用 API；不直接连接数据库、Redis 或 MinIO。&quot;)),
+            node(&quot;api&quot;, 502, 28, &quot;业务 API&quot;, &quot;FastAPI + Pydantic&quot;, &quot;api&quot;, detail(&quot;FastAPI 业务 API&quot;, &quot;权限、事务和任务入口的统一边界&quot;, &quot;FastAPI · SQLAlchemy&quot;, [&quot;JWT 鉴权、Pydantic 参数校验、业务权限过滤&quot;, &quot;作品、事件、章节、研究、热梗、样本和任务 API&quot;, &quot;事务落库后再入队；SSE 提供断线补拉&quot;], &quot;所有私人/公共查询在服务端判权；API 不执行长时间 LLM 任务。&quot;)),
+            node(&quot;worker&quot;, 734, 28, &quot;Agent Worker&quot;, &quot;LangGraph + 自研任务协议&quot;, &quot;worker&quot;, detail(&quot;异步 Agent Worker&quot;, &quot;长耗时创作任务和恢复机制&quot;, &quot;Python · LangGraph&quot;, [&quot;整书、事件、章节、审校、记忆和样本任务&quot;, &quot;租约、心跳、检查点、暂停、继续和失败恢复&quot;, &quot;调用生成模型、审校模型、搜索与 Embedding&quot;], &quot;Worker 从 Redis 取任务，以 PostgreSQL 中的任务状态和检查点为准。&quot;)),
+            node(&quot;models&quot;, 966, 28, &quot;模型能力&quot;, &quot;生成 / 审校 / 搜索 / 向量&quot;, &quot;external&quot;, detail(&quot;外部模型能力&quot;, &quot;按角色拆分生成、审校和检索&quot;, &quot;OpenAI-compatible · Responses&quot;, [&quot;生成模型负责事件和正文&quot;, &quot;审校模型负责规划门禁、章节审校和补丁&quot;, &quot;DeepSeek web_search 优先；百炼负责 Embedding&quot;], &quot;模型密钥按用户偏好配置；上下文长度由系统压缩管理，不把模型窗口误当输出上限。&quot;)),
+            node(&quot;modules&quot;, 92, 174, &quot;创作领域&quot;, &quot;作品圣经 · 事件 · 章节&quot;, &quot;api&quot;, detail(&quot;创作领域服务&quot;, &quot;从全书设定逐级落到章节正文&quot;, &quot;Domain Services&quot;, [&quot;作品圣经保存长期设定与风格约束&quot;, &quot;剧情事件覆盖一组章节并形成闭环&quot;, &quot;章节保存正文、摘要、上下文快照和修订结果&quot;], &quot;章节生成只能使用当前用户作品的设定、记忆和授权知识。&quot;), 205),
+            node(&quot;knowledge&quot;, 332, 174, &quot;知识与检索&quot;, &quot;资料 · 热梗 · 样本标注&quot;, &quot;api&quot;, detail(&quot;知识与检索服务&quot;, &quot;为规划和写作提供少量高相关参考&quot;, &quot;pgvector · pg_trgm&quot;, [&quot;情节设计前强制触发网络检索&quot;, &quot;热梗只保留原词、含义、适用场景&quot;, &quot;可信人工样本标注进入双通道 RAG&quot;], &quot;检索结果先过权限、可信度、分类与复用许可，再进入 Prompt。&quot;), 205),
+            node(&quot;quality&quot;, 572, 174, &quot;质量系统&quot;, &quot;契约 · 审校 · 补丁 · 复检&quot;, &quot;guard&quot;, detail(&quot;质量门禁与修订&quot;, &quot;把模型输出转成可持续生产的章节&quot;, &quot;Rule Engine · Review LLM&quot;, [&quot;JSON 修复与 Schema 校验&quot;, &quot;标点、字数、段落说话人、剧情质量等检查&quot;, &quot;局部补丁优先，事件复检负责最终闭环&quot;], &quot;失败由平台自动重试、修订或恢复；不会把整改责任直接甩给用户。&quot;), 205),
+            node(&quot;realtime&quot;, 812, 174, &quot;实时反馈&quot;, &quot;任务事件 + SSE&quot;, &quot;frontend&quot;, detail(&quot;实时执行控制台&quot;, &quot;持续呈现步骤、进度和可展示的模型输出&quot;, &quot;SSE · Task Events&quot;, [&quot;生成与审校两个通道并行展示&quot;, &quot;等待首个有效内容与流中空闲分别计时&quot;, &quot;协作事件带序号，断线后从数据库补拉&quot;], &quot;空白心跳不算有效模型内容；实时层不是数据持久化层。&quot;), 205),
+            node(&quot;postgres&quot;, 145, 405, &quot;PostgreSQL 16&quot;, &quot;事实数据 + pgvector&quot;, &quot;data&quot;, detail(&quot;PostgreSQL 16 + pgvector&quot;, &quot;全系统唯一业务事实源&quot;, &quot;SQLAlchemy · Alembic&quot;, [&quot;用户、作品、事件、章节、任务、记忆和审校问题&quot;, &quot;样本元数据、标注、投票、举报、审计事件&quot;, &quot;向量索引和 pg_trgm 关键词检索&quot;], &quot;事务、权限字段和审计记录均在数据库；迁移由 Alembic 管理。&quot;), 220),
+            node(&quot;redis&quot;, 410, 405, &quot;Redis 7&quot;, &quot;队列、唤醒、限流&quot;, &quot;data&quot;, detail(&quot;Redis 任务与实时通道&quot;, &quot;高频瞬时状态，不替代数据库&quot;, &quot;Redis&quot;, [&quot;任务队列与 Worker 阻塞消费&quot;, &quot;SSE/协作事件唤醒和广播&quot;, &quot;标注、投票、举报等频率限制&quot;], &quot;Redis 丢失时可由 PostgreSQL 状态恢复；业务最终状态不只存在 Redis。&quot;), 220),
+            node(&quot;minio&quot;, 675, 405, &quot;MinIO&quot;, &quot;原文与大对象&quot;, &quot;data&quot;, detail(&quot;MinIO 对象存储&quot;, &quot;避免把整本样本原文塞入关系数据库&quot;, &quot;S3-compatible&quot;, [&quot;样本原始 TXT/MD&quot;, &quot;分页阅读分段对象&quot;, &quot;后续导出文件和大体积素材&quot;], &quot;浏览器不接触 MinIO 凭据；对象读取始终先经过 API 权限校验。&quot;), 220),
+            node(&quot;external&quot;, 940, 405, &quot;外部服务&quot;, &quot;LLM · 百炼 · Web Search&quot;, &quot;external&quot;, detail(&quot;外部智能服务&quot;, &quot;可替换的模型与检索适配层&quot;, &quot;HTTPX&quot;, [&quot;OpenAI-compatible Chat/Responses 调用&quot;, &quot;DeepSeek Responses web_search 优先，Tavily 仅兼容降级&quot;, &quot;阿里云百炼 qwen3.7-text-embedding&quot;], &quot;远程失败通过超时、流式空闲检测、结构化修复与任务重试隔离。&quot;), 220)
+          ],
+          edges: [edge(&quot;user&quot;, &quot;web&quot;), edge(&quot;web&quot;, &quot;api&quot;), edge(&quot;api&quot;, &quot;worker&quot;, &quot;入队&quot;, &quot;async&quot;), edge(&quot;worker&quot;, &quot;models&quot;), edge(&quot;api&quot;, &quot;modules&quot;), edge(&quot;api&quot;, &quot;knowledge&quot;), edge(&quot;worker&quot;, &quot;quality&quot;), edge(&quot;api&quot;, &quot;realtime&quot;, &quot;SSE&quot;, &quot;async&quot;), edge(&quot;modules&quot;, &quot;postgres&quot;), edge(&quot;knowledge&quot;, &quot;postgres&quot;, &quot;向量&quot;, &quot;semantic&quot;), edge(&quot;api&quot;, &quot;redis&quot;, &quot;队列&quot;, &quot;async&quot;), edge(&quot;api&quot;, &quot;minio&quot;), edge(&quot;worker&quot;, &quot;external&quot;), edge(&quot;worker&quot;, &quot;postgres&quot;), edge(&quot;worker&quot;, &quot;redis&quot;, &quot;租约&quot;, &quot;control&quot;)]
+        },
+
+        generation: {
+          title: &quot;小说生产数据流&quot;,
+          summary: &quot;起始需求经过作品圣经、事件规划、强制检索、逐章生成和两级审校，最终沉淀为下一轮上下文。&quot;,
+          desc: &quot;NovelForge 先固定全书约束，再以剧情事件为批次规划章节；每章生成前注入检索与记忆，生成后经过规则、审校和补丁，事件结束后统一复检并更新后台记忆。&quot;,
+          defaultNode: &quot;event-plan&quot;,
+          lanes: [lane(8, 116, &quot;全书与事件规划&quot;), lane(145, 250, &quot;逐章生产循环&quot;), lane(418, 140, &quot;沉淀与继续&quot;)],
+          nodes: [
+            node(&quot;requirements&quot;, 38, 28, &quot;起始需求&quot;, &quot;题材、人物、风格、禁忌&quot;, &quot;frontend&quot;, detail(&quot;起始需求文档&quot;, &quot;用户给出的最高层创作约束&quot;, &quot;Markdown · Form&quot;, [&quot;定义题材、核心关系和读者承诺&quot;, &quot;指定风格、章节字数与禁止方向&quot;, &quot;作为作品圣经和所有后续 Prompt 的源头&quot;], &quot;可以被优化和结构化，但不能被下游模型擅自改写核心设定。&quot;), 185),
+            node(&quot;bible&quot;, 270, 28, &quot;作品圣经&quot;, &quot;长期结构化约束&quot;, &quot;api&quot;, detail(&quot;Story Bible&quot;, &quot;全书级设定中心&quot;, &quot;PostgreSQL · JSONB&quot;, [&quot;人物、关系、世界规则、主线和风格约束&quot;, &quot;对事件规划、章节生成和审校统一生效&quot;, &quot;支持版本和锁定字段&quot;], &quot;优先级高于单章记忆与临时模型建议。&quot;), 185),
+            node(&quot;event-plan&quot;, 502, 28, &quot;事件规划&quot;, &quot;候选 → 硬门禁 → 定稿&quot;, &quot;worker&quot;, detail(&quot;剧情事件规划&quot;, &quot;为一组章节设计闭环因果链&quot;, &quot;LangGraph · Review LLM&quot;, [&quot;生成多个不同剧情驱动力候选&quot;, &quot;检查钩子、喜剧节拍、转折、回报和辅助元素占比&quot;, &quot;门禁失败时定向修复，不简单带警告放行&quot;], &quot;事件计划决定章节目标，但不会把职业、检索资料或热梗变成剧情主角。&quot;), 185),
+            node(&quot;research&quot;, 734, 28, &quot;强制资料检索&quot;, &quot;情节写法 + 搞笑话术&quot;, &quot;external&quot;, detail(&quot;事件资料检索&quot;, &quot;规划和写作前补充真实表达素材&quot;, &quot;DeepSeek web_search&quot;, [&quot;围绕具体情节搜索怎么写&quot;, &quot;搜索生活化、喜剧和抽象表达参考&quot;, &quot;保存来源与检索提供方，供审计和复用&quot;], &quot;DeepSeek Responses web_search 优先；不支持时才使用启用的 Tavily。&quot;), 205),
+            node(&quot;context&quot;, 966, 28, &quot;章节上下文&quot;, &quot;设定 + 记忆 + RAG&quot;, &quot;api&quot;, detail(&quot;章节上下文构建&quot;, &quot;控制每次模型真正看到的材料&quot;, &quot;Context Builder&quot;, [&quot;作品圣经、目标章计划、最近章节和开放问题&quot;, &quot;结构化记忆、伏笔、资料、热梗和可信样本标注&quot;, &quot;超过模型上下文时由系统压缩&quot;], &quot;最大上下文是系统预算，不作为 max_tokens 发送；输出上限保持模型默认。&quot;), 205),
+            node(&quot;draft&quot;, 966, 178, &quot;正文生成&quot;, &quot;流式输出章节草稿&quot;, &quot;external&quot;, detail(&quot;正文生成模型&quot;, &quot;把计划转成自然、可读的小说正文&quot;, &quot;Generation LLM&quot;, [&quot;章节钩子、场景攻防、对话和心理活动&quot;, &quot;流式返回可展示内容&quot;, &quot;遵循喜剧密度、抽象表达和去机械化规则&quot;], &quot;不要求模型输出系统内部检查结果；结构化元数据由专门步骤处理。&quot;), 205),
+            node(&quot;guards&quot;, 724, 178, &quot;本地规则检查&quot;, &quot;标点、字数、段落、重复&quot;, &quot;guard&quot;, detail(&quot;确定性规则检查&quot;, &quot;先用代码发现低成本、明确的问题&quot;, &quot;Python Rules&quot;, [&quot;中文引号和标点检查&quot;, &quot;同段只允许同一人物发言&quot;, &quot;字数、重复、段落长度与格式检查&quot;], &quot;能确定的问题不浪费审校模型；规则提供精确段落位置。&quot;), 205),
+            node(&quot;review&quot;, 482, 178, &quot;章节审校&quot;, &quot;问题清单 + 局部补丁&quot;, &quot;guard&quot;, detail(&quot;章节审校循环&quot;, &quot;按问题最小化修订正文&quot;, &quot;Review LLM&quot;, [&quot;检查设定、连贯性、语言、钩子和喜剧兑现&quot;, &quot;优先返回局部补丁而非整章重写&quot;, &quot;补丁失败时按原因重定位、重试或安全降级&quot;], &quot;审校模型与生成模型角色分离；所有修改保留 Diff 和问题记录。&quot;), 205),
+            node(&quot;save&quot;, 240, 178, &quot;章节落库&quot;, &quot;正文、摘要、上下文快照&quot;, &quot;data&quot;, detail(&quot;章节持久化&quot;, &quot;保存可复盘的生成结果&quot;, &quot;PostgreSQL&quot;, [&quot;正文和最终字数&quot;, &quot;章节摘要、进度与上下文快照&quot;, &quot;局部修订、审校问题和处理状态&quot;], &quot;未通过硬门禁的草稿不会被标记为正常完成。&quot;), 205),
+            node(&quot;next&quot;, 38, 178, &quot;下一章&quot;, &quot;继承上一章结果&quot;, &quot;worker&quot;, detail(&quot;逐章循环&quot;, &quot;以前一章真实结束状态驱动下一章&quot;, &quot;LangGraph&quot;, [&quot;更新人物位置、关系、未完成动作和章节余力&quot;, &quot;重新构建下一章上下文&quot;, &quot;每章都执行生成、检查、审校和保存&quot;], &quot;可在安全边界响应暂停；恢复时从检查点继续，不重做已完成章节。&quot;), 185),
+            node(&quot;event-review&quot;, 270, 452, &quot;事件复检&quot;, &quot;跨章一致性与失败章修复&quot;, &quot;guard&quot;, detail(&quot;事件级复检&quot;, &quot;章节单独合格后再检查整体事件&quot;, &quot;Review + Patch&quot;, [&quot;统一检查跨章因果、人物关系和设定&quot;, &quot;只重试失败章节的补丁&quot;, &quot;收敛后标记事件完成&quot;], &quot;事件复检必须可恢复，不能因为个别补丁失败丢弃整批已完成章节。&quot;), 210),
+            node(&quot;memory&quot;, 520, 452, &quot;后台记忆&quot;, &quot;人物、关系、伏笔、时间线&quot;, &quot;data&quot;, detail(&quot;结构化后台记忆&quot;, &quot;把已发生事实压缩成下一轮可用状态&quot;, &quot;PostgreSQL · JSONB&quot;, [&quot;人物状态和关系变化&quot;, &quot;地点、道具、事件、世界规则和时间线&quot;, &quot;伏笔创建、推进与回收&quot;], &quot;记忆只记录正文中已发生或明确承诺的事实，不把模型猜测当事实。&quot;), 210),
+            node(&quot;continue&quot;, 770, 452, &quot;下一事件 / 导出&quot;, &quot;继续生产或汇总成作品&quot;, &quot;frontend&quot;, detail(&quot;生产闭环出口&quot;, &quot;达到事件边界后继续或交付&quot;, &quot;Auto Run&quot;, [&quot;自动规划下一剧情事件&quot;, &quot;达到目标字数后结束整书生产&quot;, &quot;章节管理和作品导出&quot;], &quot;用户暂停、质量门禁和目标字数都可以终止当前循环。&quot;), 230)
+          ],
+          edges: [edge(&quot;requirements&quot;, &quot;bible&quot;), edge(&quot;bible&quot;, &quot;event-plan&quot;), edge(&quot;event-plan&quot;, &quot;research&quot;), edge(&quot;research&quot;, &quot;context&quot;), edge(&quot;context&quot;, &quot;draft&quot;), edge(&quot;draft&quot;, &quot;guards&quot;), edge(&quot;guards&quot;, &quot;review&quot;), edge(&quot;review&quot;, &quot;save&quot;), edge(&quot;save&quot;, &quot;next&quot;), edge(&quot;next&quot;, &quot;context&quot;, &quot;逐章循环&quot;, &quot;control&quot;), edge(&quot;save&quot;, &quot;event-review&quot;, &quot;章节完成&quot;, &quot;async&quot;), edge(&quot;event-review&quot;, &quot;memory&quot;), edge(&quot;memory&quot;, &quot;continue&quot;, &quot;上下文&quot;, &quot;semantic&quot;), edge(&quot;continue&quot;, &quot;event-plan&quot;, &quot;下一事件&quot;, &quot;control&quot;)]
+        },
+
+        collaboration: {
+          title: &quot;协同样本标注数据流&quot;,
+          summary: &quot;模型只做总体分析；真正进入知识库的精彩片段来自用户原文选区、社区共识和权限门禁。&quot;,
+          desc: &quot;上传文本保存在 MinIO，模型只输出总体评价、语言原则和避错项。用户对原文独立多标签标注，公共标注经投票、举报和信誉聚合后才建立向量；私人标注始终只供所有者使用。&quot;,
+          defaultNode: &quot;annotation&quot;,
+          lanes: [lane(8, 116, &quot;上传与基础分析&quot;), lane(145, 245, &quot;人工协同与治理&quot;), lane(415, 140, &quot;可信知识使用&quot;)],
+          nodes: [
+            node(&quot;upload&quot;, 38, 28, &quot;上传 TXT / MD&quot;, &quot;可选私人或公开&quot;, &quot;frontend&quot;, detail(&quot;样本上传&quot;, &quot;建立样本作品，不把文件塞进数据库&quot;, &quot;Next.js · FastAPI&quot;, [&quot;校验格式、大小和内容哈希&quot;, &quot;公开样本要求权利声明与复用许可&quot;, &quot;创建异步总体分析任务&quot;], &quot;私人默认仅所有者可见；公开必须显式确认分享权利。&quot;), 190),
+            node(&quot;object&quot;, 278, 28, &quot;MinIO 原文&quot;, &quot;原文件 + 阅读分段&quot;, &quot;data&quot;, detail(&quot;样本原文存储&quot;, &quot;保存大文本与分页阅读对象&quot;, &quot;MinIO&quot;, [&quot;原始文件按用户和样本 ID 隔离&quot;, &quot;Worker 建立稳定的阅读分段与哈希&quot;, &quot;API 判权后按分段返回正文&quot;], &quot;PostgreSQL 只保存对象 Key、偏移和哈希，不保存整本原文。&quot;), 190),
+            node(&quot;ai-summary&quot;, 518, 28, &quot;AI 总体分析&quot;, &quot;评价 · 原则 · 避错&quot;, &quot;external&quot;, detail(&quot;三字段 AI 分析&quot;, &quot;只总结方法，不替用户挑选金句&quot;, &quot;SampleAnalysis v5&quot;, [&quot;总体评价&quot;, &quot;语言表达原则&quot;, &quot;应避免的错误&quot;], &quot;禁止自动生成剧情经验卡、表达经验卡或所谓精彩原句。&quot;), 205),
+            node(&quot;reader&quot;, 768, 28, &quot;标注阅读器&quot;, &quot;原文选区 + 多标签&quot;, &quot;frontend&quot;, detail(&quot;原文标注工作台&quot;, &quot;用户直接在正文上选择连续文本&quot;, &quot;React&quot;, [&quot;分页阅读 MinIO 分段&quot;, &quot;精确记录起止偏移与原句快照&quot;, &quot;可多选幽默、抽象、对话、人物、伏笔等分类&quot;], &quot;客户端引文必须与服务端原文偏移完全一致，防止伪造标注。&quot;), 205),
+            node(&quot;annotation&quot;, 1018, 28, &quot;独立标注&quot;, &quot;互不覆盖 + 版本审计&quot;, &quot;api&quot;, detail(&quot;协同标注记录&quot;, &quot;同一段落允许多个不同观点共存&quot;, &quot;PostgreSQL · JSONB&quot;, [&quot;保存选区、分类、说明、创建者和版本&quot;, &quot;修改前保存追加式修订快照&quot;, &quot;乐观锁冲突返回 409&quot;], &quot;不同用户不会覆盖彼此；重叠选区只做聚合展示，不强行合并。&quot;), 150),
+            node(&quot;private&quot;, 80, 180, &quot;私人通道&quot;, &quot;trusted_private&quot;, &quot;guard&quot;, detail(&quot;私人样本隔离&quot;, &quot;所有者标注可立即供自己的作品检索&quot;, &quot;Owner ACL&quot;, [&quot;只有所有者可读、标注和选择&quot;, &quot;私人可信不代表公共可信&quot;, &quot;转公开时清空私人可信向量并重新进入社区验证&quot;], &quot;任何公共查询和公共 RAG 都不能命中 trusted_private。&quot;), 205),
+            node(&quot;public&quot;, 330, 180, &quot;公共通道&quot;, &quot;pending&quot;, &quot;guard&quot;, detail(&quot;公共样本协作&quot;, &quot;其他登录用户可阅读并独立贡献&quot;, &quot;Published ACL&quot;, [&quot;只暴露 published 状态作品&quot;, &quot;标注初始为 pending&quot;, &quot;公开转私人后既有外部 SSE 连接立即失效&quot;], &quot;下架后停止公共读取和检索；已有社区贡献保留审计，不物理破坏。&quot;), 205),
+            node(&quot;governance&quot;, 580, 180, &quot;社区治理&quot;, &quot;投票 · 举报 · 信誉&quot;, &quot;guard&quot;, detail(&quot;反污染与共识&quot;, &quot;把协作信号转成可信状态&quot;, &quot;Redis · PostgreSQL&quot;, [&quot;禁止自投票，一人一票&quot;, &quot;举报、反对和异常频率触发隔离&quot;, &quot;信誉影响权重，但不能覆盖他人结论&quot;], &quot;公共标注至少两个不同用户有效支持且达到阈值，才能进入 trusted。&quot;), 205),
+            node(&quot;trust&quot;, 830, 180, &quot;可信门禁&quot;, &quot;trusted / quarantined&quot;, &quot;guard&quot;, detail(&quot;标注可信状态机&quot;, &quot;决定标注是否有资格进入生成&quot;, &quot;Consensus&quot;, [&quot;pending 等待共识&quot;, &quot;trusted 才建立公共向量&quot;, &quot;quarantined 立即退出所有生成检索&quot;], &quot;投票变化只重算信任，不重复生成未变化内容的向量。&quot;), 205),
+            node(&quot;embedding&quot;, 1018, 180, &quot;异步 Embedding&quot;, &quot;百炼 1536 维&quot;, &quot;external&quot;, detail(&quot;单条标注向量化&quot;, &quot;只索引可信且授权的人工标注&quot;, &quot;qwen3.7-text-embedding&quot;, [&quot;内容哈希避免重复向量化&quot;, &quot;使用现有 Redis Worker 异步执行&quot;, &quot;远程失败不阻塞标注保存，可恢复重试&quot;], &quot;维度固定为 1536；未达可信状态不调用 Embedding。&quot;), 150),
+            node(&quot;index&quot;, 270, 452, &quot;pgvector + pg_trgm&quot;, &quot;语义与关键词双路召回&quot;, &quot;data&quot;, detail(&quot;可信标注索引&quot;, &quot;统一保存向量、原句和分类元数据&quot;, &quot;PostgreSQL&quot;, [&quot;HNSW 余弦向量检索&quot;, &quot;pg_trgm 关键词相似度检索&quot;, &quot;RRF 合并并按样本与分类去重&quot;], &quot;所有查询同时携带作品可见性、标注状态和用户所有权条件。&quot;), 235),
+            node(&quot;policy&quot;, 555, 452, &quot;复用许可&quot;, &quot;reference_only / excerpt_reuse&quot;, &quot;guard&quot;, detail(&quot;内容复用边界&quot;, &quot;决定参考机制还是允许短句候选&quot;, &quot;Policy Gate&quot;, [&quot;reference_only 只学习表达机制&quot;, &quot;excerpt_reuse 才允许短原句进入候选&quot;, &quot;最终仍执行重复度检查&quot;], &quot;授权不会绕过相关性、可信度和输出质量门禁。&quot;), 235),
+            node(&quot;rag&quot;, 840, 452, &quot;双通道 RAG&quot;, &quot;剧情结构 / 语言表达&quot;, &quot;worker&quot;, detail(&quot;样本标注 RAG&quot;, &quot;向规划和正文注入少量高相关参考&quot;, &quot;pgvector · RRF&quot;, [&quot;剧情通道偏重钩子、节奏、伏笔和转折&quot;, &quot;语言通道偏重对话、幽默、抽象和人物塑造&quot;, &quot;控制条数、字符数和同一样本占比&quot;], &quot;只返回当前任务真正需要的片段，避免全库灌入导致模仿和上下文膨胀。&quot;), 235)
+          ],
+          edges: [edge(&quot;upload&quot;, &quot;object&quot;), edge(&quot;object&quot;, &quot;ai-summary&quot;, &quot;分段&quot;, &quot;async&quot;), edge(&quot;object&quot;, &quot;reader&quot;), edge(&quot;reader&quot;, &quot;annotation&quot;), edge(&quot;annotation&quot;, &quot;private&quot;, &quot;所有者&quot;, &quot;control&quot;), edge(&quot;annotation&quot;, &quot;public&quot;, &quot;已发布&quot;, &quot;control&quot;), edge(&quot;public&quot;, &quot;governance&quot;), edge(&quot;governance&quot;, &quot;trust&quot;, &quot;共识&quot;, &quot;control&quot;), edge(&quot;trust&quot;, &quot;embedding&quot;, &quot;可信&quot;, &quot;async&quot;), edge(&quot;private&quot;, &quot;index&quot;, &quot;私有向量&quot;, &quot;semantic&quot;), edge(&quot;embedding&quot;, &quot;index&quot;, &quot;公共向量&quot;, &quot;semantic&quot;), edge(&quot;index&quot;, &quot;policy&quot;, &quot;召回&quot;, &quot;semantic&quot;), edge(&quot;policy&quot;, &quot;rag&quot;, &quot;授权参考&quot;, &quot;semantic&quot;)]
+        },
+
+        retrieval: {
+          title: &quot;检索与知识注入&quot;,
+          summary: &quot;网络资料、热梗和样本标注走不同来源治理，最后在 Prompt 前统一做权限、相关性和预算控制。&quot;,
+          desc: &quot;章节或事件先构造查询意图，再分别访问网络检索、热梗库和可信样本标注；每路结果都有专属过滤，最终在上下文预算内小量注入，并由后置规则约束输出。&quot;,
+          defaultNode: &quot;router&quot;,
+          lanes: [lane(8, 112, &quot;检索意图&quot;), lane(142, 250, &quot;三路知识来源&quot;), lane(420, 135, &quot;融合、注入与输出约束&quot;)],
+          nodes: [
+            node(&quot;state&quot;, 58, 28, &quot;当前故事状态&quot;, &quot;人物、关系、地点、章目标&quot;, &quot;api&quot;, detail(&quot;检索查询上下文&quot;, &quot;从当前写作任务提取需要补充的信息&quot;, &quot;Context Builder&quot;, [&quot;只携带当前章节或事件有关的状态&quot;, &quot;区分事实资料、热梗含义和表达参考&quot;, &quot;避免把整部作品全文作为检索词&quot;], &quot;查询来自作品自身数据，不跨用户泄露私人上下文。&quot;), 215),
+            node(&quot;router&quot;, 340, 28, &quot;检索路由&quot;, &quot;按任务拆分查询&quot;, &quot;worker&quot;, detail(&quot;知识检索路由&quot;, &quot;根据写作阶段选择正确知识来源&quot;, &quot;Agent Services&quot;, [&quot;事件设计强制网络检索怎么写和搞笑话术&quot;, &quot;热梗按含义与适用场景检索&quot;, &quot;样本按剧情与语言两个通道检索&quot;], &quot;网络事实、热梗和样本原句不能混成一个无来源文本池。&quot;), 215),
+            node(&quot;budget&quot;, 622, 28, &quot;上下文预算&quot;, &quot;系统估算、超限压缩&quot;, &quot;guard&quot;, detail(&quot;上下文长度管理&quot;, &quot;在请求模型前控制输入总量&quot;, &quot;Token Estimator&quot;, [&quot;保留高优先级作品圣经和当前章目标&quot;, &quot;压缩多轮历史、旧章节和低价值检索结果&quot;, &quot;不向 API 传递模型上下文上限作为输出参数&quot;], &quot;最大上下文窗口属于系统输入管理；max_tokens/max_output_tokens 使用模型默认策略。&quot;), 245),
+            node(&quot;prompt&quot;, 934, 28, &quot;Prompt 组装&quot;, &quot;稳定约束 + 本轮证据&quot;, &quot;api&quot;, detail(&quot;Prompt 构建器&quot;, &quot;把长期设定和本轮材料分层组装&quot;, &quot;Prompt Builder&quot;, [&quot;系统规则、作品圣经、章节计划&quot;, &quot;最近剧情状态与结构化记忆&quot;, &quot;少量带来源、类别和边界的检索结果&quot;], &quot;检索内容作为参考证据，不能覆盖用户需求和作品硬设定。&quot;), 215),
+            node(&quot;websearch&quot;, 70, 178, &quot;Web Search&quot;, &quot;DeepSeek 优先&quot;, &quot;external&quot;, detail(&quot;网络资料检索&quot;, &quot;为情节细节和喜剧表达补充外部资料&quot;, &quot;Responses web_search&quot;, [&quot;识别 DeepSeek 官方 Base URL 与 deepseek-v4-flash&quot;, &quot;服务端内置 web_search 作为首选&quot;, &quot;不支持时才使用已配置 Tavily&quot;], &quot;每条资料保存 provider 与来源 URL；前端不再把旧结果误标成当前提供方。&quot;), 230),
+            node(&quot;meme&quot;, 350, 178, &quot;热梗知识库&quot;, &quot;原词 · 含义 · 场景&quot;, &quot;data&quot;, detail(&quot;热梗知识库&quot;, &quot;只在语义和情境匹配时注入&quot;, &quot;PostgreSQL · pgvector&quot;, [&quot;用户可新增、编辑、删除和一键导出&quot;, &quot;只保留原词、含义、适用场景三个核心字段&quot;, &quot;内容变化后按条目维护向量索引&quot;], &quot;热梗不是强制台词；低置信度时宁可不用，禁止生硬塞入。&quot;), 230),
+            node(&quot;samples&quot;, 630, 178, &quot;可信样本标注&quot;, &quot;公共 + 私有隔离&quot;, &quot;data&quot;, detail(&quot;协同样本知识&quot;, &quot;人工筛选的亮点句段与写作机制&quot;, &quot;pgvector · pg_trgm&quot;, [&quot;公共只召回 trusted&quot;, &quot;私人只召回作品所有者选中的 trusted_private&quot;, &quot;分类、复用许可和相关性共同过滤&quot;], &quot;模型的总体样本评价不直接当作精彩片段索引。&quot;), 230),
+            node(&quot;memory&quot;, 910, 178, &quot;作品内部记忆&quot;, &quot;事实、伏笔、历史章节&quot;, &quot;data&quot;, detail(&quot;作品内部知识&quot;, &quot;保证当前章节与既有正文连续&quot;, &quot;PostgreSQL&quot;, [&quot;最近章节全文与摘要&quot;, &quot;人物、关系、地点、道具和时间线&quot;, &quot;开放伏笔与未解决审校问题&quot;], &quot;只读取当前作品数据；已发生事实优先级高于外部参考。&quot;), 230),
+            node(&quot;fusion&quot;, 255, 452, &quot;RRF 与规则融合&quot;, &quot;相关性、可信度、去重&quot;, &quot;worker&quot;, detail(&quot;知识融合&quot;, &quot;把不同检索结果压缩为小型参考包&quot;, &quot;RRF · Filters&quot;, [&quot;向量与关键词排名融合&quot;, &quot;限制同一样本、同一分类和总字符数&quot;, &quot;保留来源、标签、许可和使用边界&quot;], &quot;没有达到门槛的结果直接舍弃，不为了凑数量注入低质量材料。&quot;), 245),
+            node(&quot;llm&quot;, 555, 452, &quot;生成 / 审校模型&quot;, &quot;流式内容与结构化结果&quot;, &quot;external&quot;, detail(&quot;模型执行&quot;, &quot;使用整理后的上下文完成单一角色任务&quot;, &quot;LLM API&quot;, [&quot;生成模型创作正文或事件候选&quot;, &quot;审校模型评估并输出问题/补丁 JSON&quot;, &quot;Responses 流解析 reasoning、text、tool 和 usage 事件&quot;], &quot;等待首个有效内容最多 60 秒；开始输出后仅连续 60 秒无新有效内容才判卡住。&quot;), 245),
+            node(&quot;postcheck&quot;, 855, 452, &quot;后置质量门禁&quot;, &quot;JSON、重复、标点、风格&quot;, &quot;guard&quot;, detail(&quot;模型输出后处理&quot;, &quot;把不稳定输出转成系统可消费结果&quot;, &quot;JSON Repair · Rules&quot;, [&quot;提取代码块/文本中的 JSON 并修复常见格式&quot;, &quot;Schema 校验失败时定向重试&quot;, &quot;正文执行重复、标点、段落和质量检查&quot;], &quot;空字符串、心跳和只有思考没有最终内容都不算成功结果。&quot;), 245)
+          ],
+          edges: [edge(&quot;state&quot;, &quot;router&quot;), edge(&quot;router&quot;, &quot;budget&quot;, &quot;查询计划&quot;), edge(&quot;budget&quot;, &quot;prompt&quot;), edge(&quot;router&quot;, &quot;websearch&quot;, &quot;外部事实&quot;, &quot;async&quot;), edge(&quot;router&quot;, &quot;meme&quot;, &quot;语义&quot;, &quot;semantic&quot;), edge(&quot;router&quot;, &quot;samples&quot;, &quot;双通道&quot;, &quot;semantic&quot;), edge(&quot;state&quot;, &quot;memory&quot;), edge(&quot;websearch&quot;, &quot;fusion&quot;), edge(&quot;meme&quot;, &quot;fusion&quot;, &quot;候选&quot;, &quot;semantic&quot;), edge(&quot;samples&quot;, &quot;fusion&quot;, &quot;可信片段&quot;, &quot;semantic&quot;), edge(&quot;memory&quot;, &quot;fusion&quot;), edge(&quot;fusion&quot;, &quot;prompt&quot;, &quot;预算内注入&quot;, &quot;semantic&quot;), edge(&quot;prompt&quot;, &quot;llm&quot;), edge(&quot;llm&quot;, &quot;postcheck&quot;, &quot;流式/JSON&quot;, &quot;control&quot;)]
+        },
+
+        reliability: {
+          title: &quot;任务、实时与可靠性&quot;,
+          summary: &quot;PostgreSQL 保存任务事实，Redis 提供队列和唤醒，Worker 用租约、心跳和检查点保证长流程可暂停、可恢复。&quot;,
+          desc: &quot;API 先在事务中创建任务，再写入 Redis。Worker 阻塞获取任务后登记租约和心跳，以 LangGraph 检查点执行；进度事件写入数据库并通过 SSE 推送，暂停和超时能够中断远程流并保留已完成成果。&quot;,
+          defaultNode: &quot;task&quot;,
+          lanes: [lane(8, 116, &quot;请求与排队&quot;), lane(145, 250, &quot;执行、模型流与控制&quot;), lane(420, 140, &quot;状态回传与恢复&quot;)],
+          nodes: [
+            node(&quot;action&quot;, 38, 28, &quot;用户操作&quot;, &quot;开始、暂停、继续、重试&quot;, &quot;frontend&quot;, detail(&quot;任务控制入口&quot;, &quot;用户控制长流程而不直接操作 Worker&quot;, &quot;Next.js&quot;, [&quot;创建或继续自动生产&quot;, &quot;暂停当前步骤&quot;, &quot;重试失败章节或事件补丁&quot;], &quot;按钮状态来自服务端运行状态，避免前端自行猜测任务已经停止。&quot;), 190),
+            node(&quot;transaction&quot;, 278, 28, &quot;API 事务&quot;, &quot;校验权限与当前状态&quot;, &quot;api&quot;, detail(&quot;任务创建事务&quot;, &quot;保证业务记录和任务记录一致&quot;, &quot;FastAPI · SQLAlchemy&quot;, [&quot;校验作品所有权和运行冲突&quot;, &quot;创建 GenerationTask 及业务关联记录&quot;, &quot;提交数据库后写入 Redis 队列&quot;], &quot;Redis 入队失败仍能从数据库识别未执行任务，不让业务状态完全依赖队列。&quot;), 190),
+            node(&quot;task&quot;, 518, 28, &quot;GenerationTask&quot;, &quot;唯一任务事实&quot;, &quot;data&quot;, detail(&quot;任务事实记录&quot;, &quot;保存任务生命周期和可恢复信息&quot;, &quot;PostgreSQL&quot;, [&quot;queued、running、completed、failed、cancelled&quot;, &quot;progress、result_payload、错误与尝试次数&quot;, &quot;lease、heartbeat、owner 和幂等键&quot;], &quot;所有前端状态、恢复判断和审计都以数据库记录为准。&quot;), 205),
+            node(&quot;queue&quot;, 768, 28, &quot;Redis 队列&quot;, &quot;RPUSH / BLMOVE&quot;, &quot;data&quot;, detail(&quot;任务队列&quot;, &quot;低延迟地把待办交给独立 Worker&quot;, &quot;Redis&quot;, [&quot;API 生产任务&quot;, &quot;Worker 阻塞消费&quot;, &quot;处理队列与恢复队列分离，避免任务静默丢失&quot;], &quot;队列只承载任务 ID；完整输入、状态和结果保存在 PostgreSQL。&quot;), 205),
+            node(&quot;claim&quot;, 1018, 28, &quot;Worker 认领&quot;, &quot;租约 + 心跳&quot;, &quot;worker&quot;, detail(&quot;任务认领与保活&quot;, &quot;防止多个 Worker 重复执行同一任务&quot;, &quot;Lease Protocol&quot;, [&quot;原子认领并写入 worker_id&quot;, &quot;定时刷新 heartbeat 和 lease_expires_at&quot;, &quot;租约过期后由恢复逻辑重新处理&quot;], &quot;任务完成、失败或取消后停止心跳并清理处理队列引用。&quot;), 150),
+            node(&quot;checkpoint&quot;, 70, 178, &quot;LangGraph 检查点&quot;, &quot;事件级和整书级&quot;, &quot;worker&quot;, detail(&quot;流程检查点&quot;, &quot;让复杂 Agent 流程从已完成节点恢复&quot;, &quot;LangGraph&quot;, [&quot;规划、章节循环、事件总结等节点持久化&quot;, &quot;支持 plan-only、继续事件和整书循环&quot;, &quot;恢复时跳过已经可靠完成的阶段&quot;], &quot;检查点保存到数据库，不依赖 Worker 进程内存。&quot;), 230),
+            node(&quot;stream&quot;, 350, 178, &quot;LLM 流式调用&quot;, &quot;reasoning / text / tools&quot;, &quot;external&quot;, detail(&quot;模型流处理&quot;, &quot;解析不同兼容 API 的增量事件&quot;, &quot;HTTPX · SSE Parser&quot;, [&quot;区分思考、最终文本、工具调用和 usage&quot;, &quot;第一个有效内容 60 秒超时&quot;, &quot;开始输出后连续 60 秒无新有效内容才判卡住&quot;], &quot;空白心跳不刷新有效内容计时；暂停检查可主动中止网络流。&quot;), 230),
+            node(&quot;structured&quot;, 630, 178, &quot;结构化修复&quot;, &quot;提取 → repair → schema&quot;, &quot;guard&quot;, detail(&quot;JSON 可靠化&quot;, &quot;处理模型偶发返回非标准 JSON&quot;, &quot;json-repair · Pydantic&quot;, [&quot;从 Markdown 或混合文本提取 JSON&quot;, &quot;修复尾逗号、引号等常见语法&quot;, &quot;按 Schema 定向重试，不盲目整轮重来&quot;], &quot;已收到的大段有效输出不会因为单个格式问题直接丢弃；优先局部修复。&quot;), 230),
+            node(&quot;pause&quot;, 910, 178, &quot;暂停与取消&quot;, &quot;轮询控制信号&quot;, &quot;guard&quot;, detail(&quot;可中断控制&quot;, &quot;停止等待模型并保留已经完成的数据&quot;, &quot;Cancel Check&quot;, [&quot;运行状态写入 pause_requested&quot;, &quot;流式调用周期性检查并主动中止&quot;, &quot;在章节或图节点安全边界落检查点&quot;], &quot;暂停不等于删除；继续时使用已保存章节和图状态，不从事件开头重跑。&quot;), 230),
+            node(&quot;events&quot;, 250, 452, &quot;任务事件&quot;, &quot;递增序号 + 数据库留痕&quot;, &quot;data&quot;, detail(&quot;执行事件流&quot;, &quot;统一记录步骤、模型通道和进度&quot;, &quot;PostgreSQL · Redis&quot;, [&quot;事件先持久化再广播&quot;, &quot;Redis 只负责唤醒订阅者&quot;, &quot;断线客户端按最后序号补拉&quot;], &quot;心跳事件与业务事件分离；历史记录用于排查卡住、重试和失败原因。&quot;), 240),
+            node(&quot;sse&quot;, 540, 452, &quot;前端 SSE&quot;, &quot;实时控制台&quot;, &quot;frontend&quot;, detail(&quot;实时展示&quot;, &quot;不刷新页面查看 Agent 当前阶段&quot;, &quot;Authenticated SSE&quot;, [&quot;To-do 流程、进度、生成与审校通道&quot;, &quot;章节实时预览与局部修订&quot;, &quot;协同标注变化实时刷新&quot;], &quot;SSE 连接期间持续复查样本访问权限；断开不会影响后台任务执行。&quot;), 240),
+            node(&quot;recover&quot;, 830, 452, &quot;恢复与收敛&quot;, &quot;租约过期、局部重试、检查点&quot;, &quot;worker&quot;, detail(&quot;失败恢复&quot;, &quot;尽量复用有效成果而不是整轮重跑&quot;, &quot;Recovery&quot;, [&quot;租约过期任务重新认领&quot;, &quot;JSON 或补丁问题优先定向重试&quot;, &quot;事件复检只处理仍失败的章节&quot;], &quot;达到不可恢复条件才标记失败；错误信息保留具体阶段、模型与原因。&quot;), 240)
+          ],
+          edges: [edge(&quot;action&quot;, &quot;transaction&quot;), edge(&quot;transaction&quot;, &quot;task&quot;), edge(&quot;task&quot;, &quot;queue&quot;, &quot;任务 ID&quot;, &quot;async&quot;), edge(&quot;queue&quot;, &quot;claim&quot;, &quot;阻塞消费&quot;, &quot;async&quot;), edge(&quot;claim&quot;, &quot;checkpoint&quot;, &quot;执行&quot;, &quot;control&quot;), edge(&quot;checkpoint&quot;, &quot;stream&quot;), edge(&quot;stream&quot;, &quot;structured&quot;), edge(&quot;structured&quot;, &quot;pause&quot;, &quot;步骤结果&quot;, &quot;control&quot;), edge(&quot;pause&quot;, &quot;checkpoint&quot;, &quot;继续/暂停&quot;, &quot;control&quot;), edge(&quot;checkpoint&quot;, &quot;events&quot;, &quot;进度&quot;, &quot;async&quot;), edge(&quot;events&quot;, &quot;sse&quot;, &quot;推送&quot;, &quot;async&quot;), edge(&quot;task&quot;, &quot;events&quot;, &quot;状态&quot;, &quot;async&quot;), edge(&quot;events&quot;, &quot;recover&quot;, &quot;失败/过期&quot;, &quot;control&quot;), edge(&quot;recover&quot;, &quot;queue&quot;, &quot;重新入队&quot;, &quot;async&quot;)]
+        }
+      };
+
+      let currentView = &quot;overview&quot;;
+      let selectedNodeId = views[currentView].defaultNode;
+
+      const byId = (view, id) =&gt; view.nodes.find((item) =&gt; item.id === id);
+      const escapeHtml = (value) =&gt; String(value)
+        .replaceAll(&quot;&amp;&quot;, &quot;&amp;amp;&quot;)
+        .replaceAll(&quot;&lt;&quot;, &quot;&amp;lt;&quot;)
+        .replaceAll(&quot;&gt;&quot;, &quot;&amp;gt;&quot;)
+        .replaceAll(&#x27;&quot;&#x27;, &quot;&amp;quot;&quot;)
+        .replaceAll(&quot;&#x27;&quot;, &quot;&amp;#039;&quot;);
+
+      function edgePath(source, target) {
+        const sx = source.x + source.w / 2;
+        const sy = source.y + source.h / 2;
+        const tx = target.x + target.w / 2;
+        const ty = target.y + target.h / 2;
+        if (Math.abs(ty - sy) &lt; 90 &amp;&amp; tx &gt; sx) {
+          const startX = source.x + source.w;
+          const endX = target.x;
+          const bend = Math.max(35, (endX - startX) / 2);
+          return `M ${startX} ${sy} C ${startX + bend} ${sy}, ${endX - bend} ${ty}, ${endX} ${ty}`;
+        }
+        if (ty &gt; sy) {
+          const startY = source.y + source.h;
+          const endY = target.y;
+          const bend = Math.max(38, (endY - startY) / 2);
+          return `M ${sx} ${startY} C ${sx} ${startY + bend}, ${tx} ${endY - bend}, ${tx} ${endY}`;
+        }
+        const loopY = Math.max(126, Math.max(source.y + source.h, target.y + target.h) + 66);
+        return `M ${source.x} ${sy} C ${source.x - 45} ${sy}, ${source.x - 45} ${loopY}, ${tx} ${loopY} C ${tx} ${loopY}, ${tx} ${target.y + target.h + 32}, ${tx} ${target.y + target.h}`;
+      }
+
+      function edgeLabelPosition(source, target) {
+        const x = (source.x + source.w / 2 + target.x + target.w / 2) / 2;
+        const y = (source.y + source.h / 2 + target.y + target.h / 2) / 2 - 8;
+        return { x, y };
+      }
+
+      function renderDetail(view, id) {
+        const item = byId(view, id) || view.nodes[0];
+        selectedNodeId = item.id;
+        root.querySelector(&quot;#nf-detail-title&quot;).textContent = item.info.title;
+        root.querySelector(&quot;#nf-detail-subtitle&quot;).textContent = item.info.subtitle;
+        root.querySelector(&quot;#nf-detail-stack&quot;).textContent = item.info.stack;
+        root.querySelector(&quot;#nf-detail-boundary&quot;).textContent = item.info.boundary;
+        root.querySelector(&quot;#nf-detail-functions&quot;).innerHTML = item.info.functions
+          .map((entry) =&gt; `&lt;li&gt;${escapeHtml(entry)}&lt;/li&gt;`)
+          .join(&quot;&quot;);
+        nodeSelect.value = item.id;
+        nodesLayer.querySelectorAll(&quot;.nf-node&quot;).forEach((element) =&gt; {
+          element.classList.toggle(&quot;is-selected&quot;, element.dataset.nodeId === item.id);
+        });
+      }
+
+      function renderView(viewKey) {
+        currentView = viewKey;
+        const view = views[viewKey];
+        selectedNodeId = view.defaultNode;
+        root.querySelector(&quot;#nf-view-title&quot;).textContent = view.title;
+        root.querySelector(&quot;#nf-view-summary&quot;).textContent = view.summary;
+        svgTitle.textContent = `NovelForge ${view.title}`;
+        svgDesc.textContent = view.desc;
+
+        root.querySelectorAll(&quot;[data-view]&quot;).forEach((button) =&gt; {
+          const active = button.dataset.view === viewKey;
+          button.setAttribute(&quot;aria-pressed&quot;, String(active));
+          button.classList.toggle(&quot;btn-primary&quot;, active);
+        });
+
+        lanesLayer.innerHTML = view.lanes.map((item) =&gt; `
+          &lt;g&gt;
+            &lt;rect class=&quot;nf-lane&quot; x=&quot;8&quot; y=&quot;${item.y}&quot; width=&quot;1184&quot; height=&quot;${item.h}&quot; rx=&quot;14&quot;&gt;&lt;/rect&gt;
+            &lt;text class=&quot;nf-lane-label&quot; x=&quot;22&quot; y=&quot;${item.y + 22}&quot;&gt;${escapeHtml(item.label)}&lt;/text&gt;
+          &lt;/g&gt;`).join(&quot;&quot;);
+
+        edgesLayer.innerHTML = view.edges.map((item) =&gt; {
+          const source = byId(view, item.from);
+          const target = byId(view, item.to);
+          const labelAt = edgeLabelPosition(source, target);
+          return `
+            &lt;g&gt;
+              &lt;path class=&quot;nf-edge&quot; data-kind=&quot;${item.kind}&quot; d=&quot;${edgePath(source, target)}&quot;&gt;&lt;/path&gt;
+              ${item.label ? `&lt;text class=&quot;nf-edge-label&quot; text-anchor=&quot;middle&quot; x=&quot;${labelAt.x}&quot; y=&quot;${labelAt.y}&quot;&gt;${escapeHtml(item.label)}&lt;/text&gt;` : &quot;&quot;}
+            &lt;/g&gt;`;
+        }).join(&quot;&quot;);
+
+        nodesLayer.innerHTML = view.nodes.map((item) =&gt; `
+          &lt;g class=&quot;nf-node${item.id === selectedNodeId ? &quot; is-selected&quot; : &quot;&quot;}&quot; data-node-id=&quot;${item.id}&quot; data-kind=&quot;${item.kind}&quot; aria-label=&quot;${escapeHtml(item.title)}：${escapeHtml(item.subtitle)}&quot;&gt;
+            &lt;rect class=&quot;nf-node-box&quot; x=&quot;${item.x}&quot; y=&quot;${item.y}&quot; width=&quot;${item.w}&quot; height=&quot;${item.h}&quot; rx=&quot;12&quot;&gt;&lt;/rect&gt;
+            &lt;text class=&quot;nf-node-title&quot; x=&quot;${item.x + 14}&quot; y=&quot;${item.y + 29}&quot;&gt;${escapeHtml(item.title)}&lt;/text&gt;
+            &lt;text class=&quot;nf-node-subtitle&quot; x=&quot;${item.x + 14}&quot; y=&quot;${item.y + 52}&quot;&gt;${escapeHtml(item.subtitle)}&lt;/text&gt;
+          &lt;/g&gt;`).join(&quot;&quot;);
+
+        nodeSelect.innerHTML = view.nodes
+          .map((item) =&gt; `&lt;option value=&quot;${item.id}&quot;&gt;${escapeHtml(item.title)}&lt;/option&gt;`)
+          .join(&quot;&quot;);
+        mobileFlow.innerHTML = view.nodes
+          .map((item) =&gt; `&lt;li&gt;&lt;strong&gt;${escapeHtml(item.title)}&lt;/strong&gt;&lt;br&gt;&lt;span class=&quot;text-muted&quot;&gt;${escapeHtml(item.subtitle)}&lt;/span&gt;&lt;/li&gt;`)
+          .join(&quot;&quot;);
+        renderDetail(view, selectedNodeId);
+      }
+
+      root.querySelectorAll(&quot;[data-view]&quot;).forEach((button) =&gt; {
+        button.addEventListener(&quot;click&quot;, () =&gt; renderView(button.dataset.view));
+      });
+      nodeSelect.addEventListener(&quot;change&quot;, () =&gt; renderDetail(views[currentView], nodeSelect.value));
+      renderView(currentView);
+    })();
+  &lt;/script&gt;
+&lt;/section&gt;
+
+&lt;script src=&quot;https://unpkg.com/@floating-ui/core@1.7.3/dist/floating-ui.core.umd.min.js&quot;&gt;&lt;/script&gt;
+&lt;script src=&quot;https://unpkg.com/@floating-ui/dom@1.7.4/dist/floating-ui.dom.umd.min.js&quot;&gt;&lt;/script&gt;
+&lt;script&gt;
+(() =&gt; {
+  if (window.FloatingUIDOM == null) {
+    return;
+  }
+  const { autoUpdate, computePosition, flip, offset, shift, size } =
+    window.FloatingUIDOM;
+  const tooltipPlacements = new Set([&quot;top&quot;, &quot;right&quot;, &quot;bottom&quot;, &quot;left&quot;]);
+  const tooltipId = `codex-visualization-tooltip-${
+    window.crypto?.randomUUID?.() ?? Date.now().toString(36)
+  }`;
+  const tooltipGap = 5;
+  const hoverDelay = 700;
+  const skipDelay = 300;
+  let activeTrigger = null;
+  let pendingTrigger = null;
+  let tooltip = null;
+  let openTimeout = null;
+  let autoUpdateCleanup = null;
+  let positionRequest = 0;
+  let skipDelayUntil = 0;
+
+  const getTrigger = (target) =&gt;
+    target?.nodeType === Node.ELEMENT_NODE
+      ? target.closest(&quot;[data-tooltip]&quot;)
+      : null;
+  const containsTarget = (trigger, target) =&gt;
+    target?.nodeType != null &amp;&amp; trigger.contains(target);
+  const getContent = (trigger) =&gt;
+    trigger.getAttribute(&quot;data-tooltip&quot;)?.trim() ?? &quot;&quot;;
+  const getPlacement = (trigger) =&gt; {
+    const placement = trigger.getAttribute(&quot;data-tooltip-placement&quot;);
+    return tooltipPlacements.has(placement) ? placement : &quot;top&quot;;
+  };
+  const getTooltip = () =&gt; {
+    if (tooltip == null) {
+      tooltip = document.createElement(&quot;div&quot;);
+      tooltip.id = tooltipId;
+      tooltip.className = &quot;tooltip&quot;;
+      tooltip.setAttribute(&quot;role&quot;, &quot;tooltip&quot;);
+    }
+    return tooltip;
+  };
+  const setDescribedBy = (trigger, described) =&gt; {
+    const ids = new Set(
+      (trigger.getAttribute(&quot;aria-describedby&quot;) ?? &quot;&quot;)
+        .split(/\s+/)
+        .filter(Boolean),
+    );
+    if (described) {
+      ids.add(tooltipId);
+    } else {
+      ids.delete(tooltipId);
+    }
+    if (ids.size === 0) {
+      trigger.removeAttribute(&quot;aria-describedby&quot;);
+    } else {
+      trigger.setAttribute(&quot;aria-describedby&quot;, [...ids].join(&quot; &quot;));
+    }
+  };
+  const clearOpenTimeout = () =&gt; {
+    if (openTimeout != null) {
+      window.clearTimeout(openTimeout);
+      openTimeout = null;
+    }
+    pendingTrigger = null;
+  };
+  const closeTooltip = (activateSkipDelay = true) =&gt; {
+    clearOpenTimeout();
+    positionRequest += 1;
+    autoUpdateCleanup?.();
+    autoUpdateCleanup = null;
+    if (activeTrigger == null) {
+      return;
+    }
+    setDescribedBy(activeTrigger, false);
+    activeTrigger = null;
+    tooltip?.remove();
+    if (activateSkipDelay) {
+      skipDelayUntil = Date.now() + skipDelay;
+    }
+  };
+  const updatePosition = (trigger, floating) =&gt; {
+    const request = ++positionRequest;
+    void computePosition(trigger, floating, {
+      middleware: [
+        offset(tooltipGap),
+        flip({ padding: tooltipGap }),
+        shift({ padding: tooltipGap }),
+        size({
+          padding: tooltipGap,
+          apply({ availableHeight, availableWidth, elements }) {
+            elements.floating.style.setProperty(
+              &quot;--tooltip-available-width&quot;,
+              `${Math.max(0, availableWidth)}px`,
+            );
+            elements.floating.style.setProperty(
+              &quot;--tooltip-available-height&quot;,
+              `${Math.max(0, availableHeight)}px`,
+            );
+          },
+        }),
+      ],
+      placement: getPlacement(trigger),
+      strategy: &quot;fixed&quot;,
+    })
+      .then(({ x, y }) =&gt; {
+        if (activeTrigger !== trigger || request !== positionRequest) {
+          return;
+        }
+        const scale = window.devicePixelRatio || 1;
+        floating.style.transform = `translate(${Math.round(x * scale) / scale}px, ${Math.round(y * scale) / scale}px)`;
+        floating.style.visibility = &quot;visible&quot;;
+      })
+      .catch(() =&gt; {
+        if (activeTrigger === trigger &amp;&amp; request === positionRequest) {
+          closeTooltip(false);
+        }
+      });
+  };
+  const openTooltip = (trigger) =&gt; {
+    const content = getContent(trigger);
+    if (!trigger.isConnected || content.length === 0) {
+      return;
+    }
+    clearOpenTimeout();
+    if (activeTrigger === trigger) {
+      return;
+    }
+    closeTooltip();
+    const floating = getTooltip();
+    floating.textContent = content;
+    floating.style.visibility = &quot;hidden&quot;;
+    floating.style.transform = &quot;translate(0, 0)&quot;;
+    document.body.appendChild(floating);
+    activeTrigger = trigger;
+    setDescribedBy(trigger, true);
+    autoUpdateCleanup = autoUpdate(trigger, floating, () =&gt; {
+      updatePosition(trigger, floating);
+    });
+  };
+  const requestOpen = (trigger, immediate = false) =&gt; {
+    if (
+      getContent(trigger).length === 0 ||
+      activeTrigger === trigger ||
+      pendingTrigger === trigger
+    ) {
+      return;
+    }
+    clearOpenTimeout();
+    pendingTrigger = trigger;
+    const delay =
+      immediate || activeTrigger != null || Date.now() &lt; skipDelayUntil
+        ? 0
+        : hoverDelay;
+    if (delay === 0) {
+      openTooltip(trigger);
+      return;
+    }
+    openTimeout = window.setTimeout(() =&gt; {
+      openTimeout = null;
+      pendingTrigger = null;
+      openTooltip(trigger);
+    }, delay);
+  };
+  const handlePointerOpen = (event) =&gt; {
+    if (event.pointerType === &quot;touch&quot;) {
+      return;
+    }
+    const trigger = getTrigger(event.target);
+    if (trigger == null || containsTarget(trigger, event.relatedTarget)) {
+      return;
+    }
+    requestOpen(trigger);
+  };
+  const handleLeave = (event) =&gt; {
+    const trigger = getTrigger(event.target);
+    if (trigger == null || containsTarget(trigger, event.relatedTarget)) {
+      return;
+    }
+    if (activeTrigger === trigger || pendingTrigger === trigger) {
+      closeTooltip();
+    }
+  };
+  const handleFocusIn = (event) =&gt; {
+    const trigger = getTrigger(event.target);
+    if (trigger?.matches(&quot;:focus-visible&quot;)) {
+      requestOpen(trigger, true);
+    }
+  };
+  const handleKeyDown = (event) =&gt; {
+    if (event.key === &quot;Escape&quot;) {
+      closeTooltip();
+    }
+  };
+  const handleContextMenu = (event) =&gt; {
+    const trigger = getTrigger(event.target);
+    if (activeTrigger === trigger || pendingTrigger === trigger) {
+      closeTooltip();
+    }
+  };
+  const destroy = () =&gt; {
+    closeTooltip(false);
+    document.removeEventListener(&quot;pointerover&quot;, handlePointerOpen);
+    document.removeEventListener(&quot;pointerout&quot;, handleLeave);
+    document.removeEventListener(&quot;focusin&quot;, handleFocusIn);
+    document.removeEventListener(&quot;focusout&quot;, handleLeave);
+    document.removeEventListener(&quot;keydown&quot;, handleKeyDown);
+    document.removeEventListener(&quot;contextmenu&quot;, handleContextMenu);
+    tooltip = null;
+  };
+
+  document.addEventListener(&quot;pointerover&quot;, handlePointerOpen);
+  document.addEventListener(&quot;pointerout&quot;, handleLeave);
+  document.addEventListener(&quot;focusin&quot;, handleFocusIn);
+  document.addEventListener(&quot;focusout&quot;, handleLeave);
+  document.addEventListener(&quot;keydown&quot;, handleKeyDown);
+  document.addEventListener(&quot;contextmenu&quot;, handleContextMenu);
+  window.addEventListener(&quot;pagehide&quot;, destroy, { once: true });
+})();
+&lt;/script&gt;
+&lt;script id=&quot;codex-visualization-lucide&quot; async src=&quot;https://unpkg.com/lucide@1.17.0/dist/umd/lucide.js&quot;&gt;&lt;/script&gt;
+&lt;script&gt;
+(() =&gt; {
+  const initialize = () =&gt; {
+    globalThis.lucide?.createIcons({ attrs: { width: 16, height: 16 } });
+  };
+  if (globalThis.lucide != null) {
+    initialize();
+    return;
+  }
+  document
+    .getElementById(&quot;codex-visualization-lucide&quot;)
+    ?.addEventListener(&quot;load&quot;, initialize, { once: true });
+})();
+&lt;/script&gt;
+
+&lt;/body&gt;
+&lt;/html&gt;
+"></iframe>
+</body>
+</html>

@@ -8,7 +8,6 @@ from __future__ import annotations
 
 import json
 import hashlib
-import math
 import re
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -32,8 +31,9 @@ from app.services.llm_client import (
     LLMClient,
     LLMConfig,
     ReasoningBudgetExhaustedError,
+    build_context_token_budget,
 )
-from app.services.task_events import emit_task_event
+from app.services.task_events import ModelThinkingPublisher, emit_task_event
 
 
 MAX_EVENT_REPAIR_ROUNDS = 1
@@ -47,12 +47,12 @@ STRUCTURAL_REPAIR_PATTERNS = (
     r"压缩为\s*[一二两三四五六七八九十\d]+\s*章",
     r"删除.*章",
 )
-MAX_STRUCTURAL_WINDOWS_PER_CHAPTER = 2
+MAX_STRUCTURAL_WINDOWS_PER_CHAPTER = 4
 MAX_STRUCTURAL_WINDOW_PARAGRAPHS = 12
 MIN_STRUCTURAL_WINDOW_RETENTION = 0.65
 MAX_STRUCTURAL_WINDOW_GROWTH = 1.20
 PATCH_BATCH_SIZE = 3
-REVISION_MAX_OUTPUT_TOKENS = 10000
+MAX_PATCH_VALIDATION_RETRIES = 2
 MIN_WINDOW_REWRITE_TARGETS = 8
 WINDOW_REWRITE_PATTERNS = (
     r"压缩",
@@ -324,7 +324,8 @@ def build_structural_repair_plan_prompt(
                 "原方案包含合并章节、跨章搬运或大段删除，当前必须改写成可执行的章内修订。"
                 "保持章节数量、顺序、开头两段、结尾两段及既有章节边界不变；"
                 "为每章分配唯一剧情功能，使相邻章节不再重复处理同一流程。"
-                "每章最多选择两个连续窗口，每个窗口最多12段。"
+                "每章最多选择四个互不重叠的连续窗口，每个窗口最多12段；大范围问题必须拆成多个原子窗口，"
+                "不能把整章塞进一个超大窗口，也不能遗漏真正承载问题的主体段落。"
                 "窗口内先压缩重复说明，再用能改变局势的行动、冲突、信息或关系后果补足，"
                 "不得靠环境、总结或职业流程填字。不得要求跨章移动、合并或删除章节。"
             ),
@@ -445,6 +446,12 @@ def build_structural_window_patch_prompt(
                 {
                     **action,
                     "old_paragraphs": paragraphs[start - 1 : end],
+                    "old_chars": sum(len(item) for item in paragraphs[start - 1 : end]),
+                    "target_chars": {
+                        "min": max(40, int(sum(len(item) for item in paragraphs[start - 1 : end]) * 0.70)),
+                        "preferred_max": int(sum(len(item) for item in paragraphs[start - 1 : end]) * 1.05) + 40,
+                        "hard_max": int(sum(len(item) for item in paragraphs[start - 1 : end]) * MAX_STRUCTURAL_WINDOW_GROWTH) + 80,
+                    },
                     "previous_two": paragraphs[max(0, start - 3) : start - 1],
                     "next_two": paragraphs[end : end + 2],
                     "chapter_word_guard": build_word_guard_report(
@@ -474,8 +481,11 @@ def build_structural_window_patch_prompt(
                 "只返回窗口编号和 new_paragraphs，原文由服务端绑定，不要复述 old_paragraphs。"
                 "保留人物、时间、地点、道具、关键对白信息及窗口前后因果。"
                 "压缩重复流程后必须用行动、冲突、信息变化或关系后果承接，不能用环境和总结填充。"
-                "必须遵守 chapter_word_guard；章节过短时，压缩的是无效流程而非总字数，"
-                "新窗口总字数不得低于旧窗口，并应用有效剧情或人物互动提高叙事密度。"
+                "改写的对白窗口必须保留或补全‘刺激→人物化理解/回避→可见反应→对方接招→局面变化’，"
+                "不得改成台词清单；关系情绪用称呼、距离、视线、步速、物品和等待等证据落地。"
+                "必须遵守每个窗口的 target_chars：优先落在 min 到 preferred_max，绝不能超过 hard_max。"
+                "压缩的是无效流程和重复解释；若章节已接近最低字数，用更有功能的行动、冲突、对白或关系后果替换，"
+                "但仍须在窗口字数上限内提高叙事密度，不能靠扩写逃避压缩。"
                 "不得修改窗口外内容，不得跨章搬运，不得改变章节开头和结尾。"
             ),
         },
@@ -525,13 +535,16 @@ def build_chapter_patch_prompt(
                 "你是 NovelForge 正文定向修改 Agent。"
                 "事件级规划已经完整分析跨章问题，你只执行当前章节的 chapter_actions。"
                 "必须遵守 canonical_facts，不得重写整章，不得修改未点名段落。"
-                "每个补丁只返回目标 paragraph_index 和替换后的完整单段 new_text；"
+                "每个补丁只返回目标 paragraph_index；普通修改用 replace 和完整单段 new_text；"
+                "人物主体混段用 split 和 2—4 个单段 new_paragraphs，合起来只改原段；"
                 "原文由服务端按段落编号绑定，不要复述 old_text。"
-                "不得合并、拆分或新增段落；修改后必须保持章节 word_range。"
+                "除显式 split 外不得合并、拆分或新增段落；修改后必须保持章节 word_range。"
                 "若 word_guard 显示章节过短，只能压缩重复信息和无效动作，"
                 "同时用有效剧情、对话、冲突或关系变化补足，不得继续缩短总字数。"
                 "不得用天气、灯光、家具、服装、食物、品牌或重复生活动作填充补丁；"
                 "环境与具体细节必须服务人物行动、冲突、线索、空间理解或必要氛围，否则应压缩。"
+                "若动作涉及对白或心理，必须保持刺激—人物化理解/回避—可见反应—对方接招的连续链；"
+                "关系情绪优先用称呼、距离、视线、步速、物品和等待等现场证据，不得用旁白宣布。"
                 "只输出 JSON，不要输出 Markdown。"
             ),
         },
@@ -539,9 +552,10 @@ def build_chapter_patch_prompt(
             "role": "user",
             "content": (
                 "请执行当前章节动作，只返回最小必要段落补丁。输出格式：\n"
-                '{"patches":[{"chapter_index":1,"paragraph_index":3,'
-                '"new_text":"替换后的完整段落",'
-                '"reason":"对应修订蓝图中的动作"}]}\n'
+                '{"patches":[{"chapter_index":1,"paragraph_index":3,"operation":"replace",'
+                '"new_text":"替换后的完整段落","reason":"对应修订蓝图中的动作"},'
+                '{"chapter_index":1,"paragraph_index":4,"operation":"split",'
+                '"new_paragraphs":["说话者的台词及动作","听者的反应"],"reason":"人物主体切换"}]}\n'
                 + json.dumps(payload, ensure_ascii=False, separators=(",", ":"))
             ),
         },
@@ -561,33 +575,10 @@ def estimate_revision_request(messages: list[dict[str, str]]) -> dict[str, int]:
 def build_dynamic_revision_config(
     base_config: LLMConfig,
     messages: list[dict[str, str]],
-    *,
-    max_output_tokens: int,
 ) -> tuple[LLMConfig, dict[str, int]]:
     metrics = estimate_revision_request(messages)
-    base_first_token_timeout = max(
-        90,
-        min(
-            300,
-            int(60 + metrics["estimated_input_tokens"] / 200),
-        ),
-    )
-    base_total_timeout = max(
-        180,
-        min(
-            900,
-            int(base_first_token_timeout + max_output_tokens / 15),
-        ),
-    )
-    activity_timeout = math.ceil(
-        max(float(base_config.timeout_seconds), base_first_token_timeout * 1.5)
-    )
-    total_timeout = math.ceil(
-        max(
-            float(base_config.total_timeout_seconds or 0),
-            base_total_timeout * 1.5,
-        )
-    )
+    context_budget = build_context_token_budget(base_config, messages)
+    activity_timeout = 60
     max_retries = (
         0
         if metrics["estimated_input_tokens"] > 30000
@@ -595,10 +586,10 @@ def build_dynamic_revision_config(
     )
     metrics.update(
         {
+            **context_budget,
             "activity_timeout_seconds": activity_timeout,
             "first_token_timeout_seconds": activity_timeout,
-            "total_timeout_seconds": total_timeout,
-            "max_output_tokens": max_output_tokens,
+            "total_timeout_seconds": None,
             "max_retries": max_retries,
         }
     )
@@ -606,7 +597,7 @@ def build_dynamic_revision_config(
         replace(
             base_config,
             timeout_seconds=float(activity_timeout),
-            total_timeout_seconds=float(total_timeout),
+            total_timeout_seconds=None,
             max_retries=max_retries,
         ),
         metrics,
@@ -623,13 +614,11 @@ def execute_streaming_revision_request(
     base_config: LLMConfig,
     messages: list[dict[str, str]],
     *,
-    max_output_tokens: int,
     on_activity: Callable[[dict[str, Any]], None] | None = None,
 ) -> tuple[dict[str, Any], dict[str, Any]]:
     config, telemetry = build_dynamic_revision_config(
         base_config,
         messages,
-        max_output_tokens=max_output_tokens,
     )
     started_at = time.monotonic()
     first_delta_at: float | None = None
@@ -645,7 +634,6 @@ def execute_streaming_revision_request(
     try:
         _, parsed = client.complete_json(
             messages,
-            max_tokens=max_output_tokens,
             stream=True,
             on_raw_delta=on_raw_delta,
             on_activity=on_activity,
@@ -695,71 +683,63 @@ def execute_patch_request_with_budget_retry(
     base_config: LLMConfig,
     messages: list[dict[str, str]],
     *,
-    initial_max_output_tokens: int = REVISION_MAX_OUTPUT_TOKENS,
-    expanded_max_output_tokens: int = REVISION_MAX_OUTPUT_TOKENS,
     on_activity: Callable[[dict[str, Any]], None] | None = None,
 ) -> tuple[dict[str, Any], dict[str, Any]]:
-    """补丁仅在思考耗尽时扩容重试当前请求，其他错误不做昂贵重跑。"""
-    attempts: list[dict[str, Any]] = []
-
-    def activity_callback(max_output_tokens: int) -> Callable[[dict[str, Any]], None] | None:
-        if on_activity is None:
-            return None
-
-        def forward(activity: dict[str, Any]) -> None:
-            on_activity({**activity, "max_output_tokens": max_output_tokens})
-
-        return forward
-
-    try:
-        parsed, telemetry = execute_streaming_revision_request(
-            base_config,
-            messages,
-            max_output_tokens=initial_max_output_tokens,
-            on_activity=activity_callback(initial_max_output_tokens),
-        )
-        attempts.append(telemetry)
-        return parsed, {
-            **telemetry,
-            "budget_retry": False,
-            "budget_attempts": attempts,
-        }
-    except RevisionRequestError as exc:
-        attempts.append(dict(exc.telemetry))
-        if (
-            exc.telemetry.get("failure_kind") != "reasoning_budget_exhausted"
-            or expanded_max_output_tokens <= initial_max_output_tokens
-        ):
-            raise
-
-    try:
-        parsed, telemetry = execute_streaming_revision_request(
-            base_config,
-            messages,
-            max_output_tokens=expanded_max_output_tokens,
-            on_activity=activity_callback(expanded_max_output_tokens),
-        )
-    except RevisionRequestError as exc:
-        attempts.append(dict(exc.telemetry))
-        combined = {
-            **exc.telemetry,
-            "budget_retry": True,
-            "initial_max_output_tokens": initial_max_output_tokens,
-            "expanded_max_output_tokens": expanded_max_output_tokens,
-            "budget_attempts": attempts,
-        }
-        raise RevisionRequestError(
-            f"补丁扩容到 {expanded_max_output_tokens} tokens 后仍失败：{exc}",
-            combined,
-        ) from exc
-    attempts.append(telemetry)
+    """使用系统侧上下文管理执行补丁请求，不设置模型输出上限。"""
+    parsed, telemetry = execute_streaming_revision_request(
+        base_config,
+        messages,
+        on_activity=on_activity,
+    )
     return parsed, {
         **telemetry,
-        "budget_retry": True,
-        "initial_max_output_tokens": initial_max_output_tokens,
-        "expanded_max_output_tokens": expanded_max_output_tokens,
-        "budget_attempts": attempts,
+        "budget_retry": False,
+        "budget_attempts": [telemetry],
     }
+
+
+def build_patch_validation_retry_messages(
+    base_messages: list[dict[str, str]],
+    parsed: dict[str, Any],
+    *,
+    error: str,
+    mode: str,
+    window_plan: dict[str, Any] | None = None,
+    allowed_targets: set[tuple[int, int]] | None = None,
+) -> list[dict[str, str]]:
+    """把服务端的精确校验错误反馈给模型，仅重做失败的原子批次。"""
+    correction = {
+        "server_validation_error": error,
+        "mode": mode,
+        "required_action": "只纠正本批输出，完整重返本批 JSON；不得扩大目标范围",
+    }
+    if mode == "window" and window_plan:
+        correction["required_windows"] = [
+            {
+                "chapter_index": chapter_index,
+                "start_paragraph": item["start_paragraph"],
+                "end_paragraph": item["end_paragraph"],
+            }
+            for chapter_index, items in window_plan.get("windows_by_chapter", {}).items()
+            for item in items
+        ]
+        correction["instruction"] = (
+            "严格按原 payload 中每个窗口的 target_chars 重写；尤其不得超过 hard_max，"
+            "也不得漏掉 required_windows。"
+        )
+    else:
+        correction["required_paragraph_targets"] = sorted(allowed_targets or set())
+        correction["instruction"] = (
+            "每个 required_paragraph_target 恰好返回一个完整单段补丁；不允许漏项、越界或新增目标。"
+        )
+    return [
+        *base_messages,
+        {"role": "assistant", "content": json.dumps(parsed, ensure_ascii=False)},
+        {
+            "role": "user",
+            "content": json.dumps(correction, ensure_ascii=False, separators=(",", ":")),
+        },
+    ]
 
 
 def text_hash(value: str) -> str:
@@ -807,7 +787,7 @@ def build_contiguous_window_repair_plan(
     chapter: Chapter,
     actions: list[dict[str, Any]],
 ) -> dict[str, Any] | None:
-    """把连续大范围的压缩任务改为至多两个原子窗口，避免零散删改。"""
+    """把连续大范围的压缩任务改为少量原子窗口，避免零散删改。"""
     combined_instruction = "\n".join(
         str(action.get("instruction") or "")
         for action in actions
@@ -938,12 +918,31 @@ def normalize_paragraph_patches(
             continue
         if key in seen:
             raise ValueError(f"第 {chapter_index} 章第 {paragraph_index} 段存在重复补丁")
-        new_text = str(item.get("new_text") or "").strip()
+        operation = str(item.get("operation") or "replace").strip().lower()
+        if operation not in {"replace", "split"}:
+            continue
+        new_paragraphs: list[str] = []
+        if operation == "split":
+            raw_new_paragraphs = item.get("new_paragraphs")
+            if not isinstance(raw_new_paragraphs, list):
+                raise ValueError(
+                    f"第 {chapter_index} 章第 {paragraph_index} 段 split 缺少 new_paragraphs"
+                )
+            new_paragraphs = [str(value or "").strip() for value in raw_new_paragraphs]
+            if not 2 <= len(new_paragraphs) <= 4 or any(
+                not value or "\n" in value or "\r" in value for value in new_paragraphs
+            ):
+                raise ValueError(
+                    f"第 {chapter_index} 章第 {paragraph_index} 段 split 必须包含 2—4 个非空单段"
+                )
+            new_text = "\n\n".join(new_paragraphs)
+        else:
+            new_text = str(item.get("new_text") or "").strip()
         expected = paragraphs[paragraph_index - 1]
         old_text = expected
         if not new_text or new_text == old_text:
             continue
-        if "\n\n" in new_text:
+        if operation == "replace" and "\n\n" in new_text:
             raise ValueError(f"第 {chapter_index} 章第 {paragraph_index} 段补丁不得包含多个段落")
         normalized.append(
             {
@@ -955,6 +954,8 @@ def normalize_paragraph_patches(
                 "old_text_hash": text_hash(old_text),
                 "old_text": old_text,
                 "new_text": new_text,
+                "new_paragraphs": new_paragraphs,
+                "operation": operation,
                 "reason": str(item.get("reason") or "事件级局部修订").strip(),
             }
         )
@@ -1002,7 +1003,6 @@ def isolate_safe_event_patches(
         if "拒绝应用旧补丁" in str(exc) or "版本已变化" in str(exc):
             raise
 
-    current_content = chapter.content or ""
     accepted: list[dict[str, Any]] = []
     rejected: list[dict[str, Any]] = []
     for patch in sorted(
@@ -1012,21 +1012,9 @@ def isolate_safe_event_patches(
             item["paragraph_index"],
         ),
     ):
-        paragraphs = split_chapter_paragraphs(current_content)
-        current_old_text = paragraphs[patch["paragraph_index"] - 1]
-        isolated_patch = {
-            **patch,
-            "base_content_hash": text_hash(current_content),
-            "old_text": current_old_text,
-            "old_text_hash": text_hash(current_old_text),
-        }
-        shadow = SimpleNamespace(
-            chapter_index=chapter.chapter_index,
-            content=current_content,
-            context_snapshot=chapter.context_snapshot,
-        )
         try:
-            current_content, _ = apply_paragraph_patches(shadow, [isolated_patch])
+            # 始终按原文段号验证候选集合；split/delete 不会让后续补丁错位。
+            apply_paragraph_patches(chapter, [*accepted, patch])
         except ValueError as exc:
             rejected.append(
                 {
@@ -1344,18 +1332,16 @@ def review_and_repair_story_event(
             package["issues"],
             event_chapters=chapters,
         )
-        max_plan_tokens = REVISION_MAX_OUTPUT_TOKENS
         _, plan_budget = build_dynamic_revision_config(
             llm_config,
             plan_messages,
-            max_output_tokens=max_plan_tokens,
         )
         state = {
             "package_number": package_number,
             "package": package,
             "target_chapters": target_chapters,
             "plan_messages": plan_messages,
-            "max_plan_tokens": max_plan_tokens,
+            "context_remaining_tokens": plan_budget["remaining_context_tokens"],
             "plan": None,
             "plan_telemetry": plan_budget,
             "chapter_results": {},
@@ -1386,6 +1372,22 @@ def review_and_repair_story_event(
             )
 
     if component_states:
+        for state in component_states:
+            state["thinking_publisher"] = (
+                ModelThinkingPublisher(
+                    task,
+                    source_step_key=f"revision_package_{state['package_number']}_plan",
+                    model_role="reviewer",
+                    model=llm_config.model,
+                    title=(
+                        f"审校模型 · 事件修订蓝图 {state['package_number']}"
+                    ),
+                )
+                if task is not None
+                else None
+            )
+            if state["thinking_publisher"] is not None:
+                state["thinking_publisher"].start()
         with ThreadPoolExecutor(
             max_workers=MAX_CONCURRENT_REPAIR_REQUESTS,
             thread_name_prefix="event-revision-plan",
@@ -1395,7 +1397,11 @@ def review_and_repair_story_event(
                     execute_streaming_revision_request,
                     llm_config,
                     state["plan_messages"],
-                    max_output_tokens=state["max_plan_tokens"],
+                    on_activity=(
+                        state["thinking_publisher"].append_activity
+                        if state["thinking_publisher"] is not None
+                        else None
+                    ),
                 ): state
                 for state in component_states
             }
@@ -1404,6 +1410,8 @@ def review_and_repair_story_event(
                 package_number = state["package_number"]
                 try:
                     parsed, telemetry = future.result()
+                    if state.get("thinking_publisher") is not None:
+                        state["thinking_publisher"].finish()
                     state["plan"] = normalize_repair_plan(
                         parsed,
                         {
@@ -1431,6 +1439,8 @@ def review_and_repair_story_event(
                             },
                         )
                 except Exception as exc:
+                    if state.get("thinking_publisher") is not None:
+                        state["thinking_publisher"].finish(status="failed")
                     telemetry = getattr(exc, "telemetry", state["plan_telemetry"])
                     state["plan_error"] = str(exc)
                     state["plan_telemetry"] = telemetry
@@ -1451,6 +1461,66 @@ def review_and_repair_story_event(
                         )
 
     patch_jobs: list[dict[str, Any]] = []
+    def retry_invalid_batch(
+        *,
+        state: dict[str, Any],
+        chapter: Chapter,
+        batch: dict[str, Any],
+        error: str,
+        attempt: int,
+        mode: str,
+    ) -> None:
+        retry_messages = build_patch_validation_retry_messages(
+            batch["messages"],
+            batch["parsed"],
+            error=error,
+            mode=mode,
+            window_plan=batch.get("window_plan"),
+            allowed_targets=batch.get("allowed_targets"),
+        )
+        retry_thinking = (
+            ModelThinkingPublisher(
+                task,
+                source_step_key=(
+                    f"revision_package_{state['package_number']}"
+                    f"_chapter_{chapter.chapter_index}_batch_{batch['batch_number']}"
+                    f"_validation_retry_{attempt}"
+                ),
+                model_role="writer",
+                model=revision_llm_config.model,
+                title=(
+                    f"正文模型 · 第 {chapter.chapter_index} 章补丁校验纠正 "
+                    f"{attempt}/{MAX_PATCH_VALIDATION_RETRIES}"
+                ),
+                chapter_index=chapter.chapter_index,
+            )
+            if task is not None
+            else None
+        )
+        if retry_thinking is not None:
+            retry_thinking.start()
+        try:
+            parsed, telemetry = execute_patch_request_with_budget_retry(
+                revision_llm_config,
+                retry_messages,
+                on_activity=(
+                    retry_thinking.append_activity
+                    if retry_thinking is not None
+                    else None
+                ),
+            )
+        except Exception:
+            if retry_thinking is not None:
+                retry_thinking.finish(status="failed")
+            raise
+        else:
+            if retry_thinking is not None:
+                retry_thinking.finish()
+        batch["parsed"] = parsed
+        batch.setdefault("validation_retries", []).append(
+            {"attempt": attempt, "previous_error": error, "telemetry": telemetry}
+        )
+
     for state in component_states:
         if state.get("plan") is None:
             continue
@@ -1466,23 +1536,28 @@ def review_and_repair_story_event(
             base_content_hash = text_hash(chapter.content or "")
             window_plan = build_contiguous_window_repair_plan(chapter, actions)
             if window_plan is not None:
-                job_specs = [
-                    {
+                atomic_windows = list(
+                    window_plan["windows_by_chapter"][chapter_index]
+                )
+                job_specs = []
+                for batch_number, atomic_window in enumerate(atomic_windows, start=1):
+                    atomic_plan = {
+                        **window_plan,
+                        "windows_by_chapter": {chapter_index: [atomic_window]},
+                    }
+                    job_specs.append({
                         "mode": "window",
                         "messages": build_structural_window_patch_prompt(
                             novel,
                             story_event,
                             [chapter],
-                            window_plan,
+                            atomic_plan,
                         ),
-                        "initial_max_output_tokens": REVISION_MAX_OUTPUT_TOKENS,
-                        "expanded_max_output_tokens": REVISION_MAX_OUTPUT_TOKENS,
-                        "batch_number": 1,
-                        "batch_count": 1,
+                        "batch_number": batch_number,
+                        "batch_count": len(atomic_windows),
                         "allowed_targets": set(),
-                        "window_plan": window_plan,
-                    }
-                ]
+                        "window_plan": atomic_plan,
+                    })
             else:
                 action_batches = build_patch_action_batches(actions)
                 job_specs = []
@@ -1501,8 +1576,6 @@ def review_and_repair_story_event(
                                 state["target_chapters"],
                                 batch_plan,
                             ),
-                            "initial_max_output_tokens": REVISION_MAX_OUTPUT_TOKENS,
-                            "expanded_max_output_tokens": REVISION_MAX_OUTPUT_TOKENS,
                             "batch_number": batch_number,
                             "batch_count": len(action_batches),
                             "allowed_targets": {
@@ -1517,7 +1590,6 @@ def review_and_repair_story_event(
                 _, patch_budget = build_dynamic_revision_config(
                     revision_llm_config,
                     spec["messages"],
-                    max_output_tokens=spec["initial_max_output_tokens"],
                 )
                 job = {
                     "state": state,
@@ -1526,6 +1598,29 @@ def review_and_repair_story_event(
                     "budget": patch_budget,
                     **spec,
                 }
+                job["thinking_publisher"] = (
+                    ModelThinkingPublisher(
+                        task,
+                        source_step_key=(
+                            f"revision_package_{state['package_number']}"
+                            f"_chapter_{chapter.chapter_index}"
+                            f"_batch_{spec['batch_number']}"
+                        ),
+                        model_role="writer",
+                        model=revision_llm_config.model,
+                        title=(
+                            f"正文模型 · 第 {chapter.chapter_index} 章事件补丁"
+                            + (
+                                f" {spec['batch_number']}/{spec['batch_count']}"
+                                if spec["batch_count"] > 1
+                                else ""
+                            )
+                        ),
+                        chapter_index=chapter.chapter_index,
+                    )
+                    if task is not None and revision_llm_config is not None
+                    else None
+                )
                 patch_jobs.append(job)
                 if task is not None:
                     emit_task_event(
@@ -1569,6 +1664,9 @@ def review_and_repair_story_event(
                     )
 
     if patch_jobs:
+        for job in patch_jobs:
+            if job["thinking_publisher"] is not None:
+                job["thinking_publisher"].start()
         with ThreadPoolExecutor(
             max_workers=MAX_CONCURRENT_REPAIR_REQUESTS,
             thread_name_prefix="event-revision-patch",
@@ -1578,8 +1676,11 @@ def review_and_repair_story_event(
                     execute_patch_request_with_budget_retry,
                     revision_llm_config,
                     job["messages"],
-                    initial_max_output_tokens=job["initial_max_output_tokens"],
-                    expanded_max_output_tokens=job["expanded_max_output_tokens"],
+                    on_activity=(
+                        job["thinking_publisher"].append_activity
+                        if job["thinking_publisher"] is not None
+                        else None
+                    ),
                 ): job
                 for job in patch_jobs
             }
@@ -1589,6 +1690,8 @@ def review_and_repair_story_event(
                 chapter = job["chapter"]
                 try:
                     parsed, telemetry = future.result()
+                    if job.get("thinking_publisher") is not None:
+                        job["thinking_publisher"].finish()
                     chapter_result = state["chapter_results"].setdefault(
                         chapter.chapter_index,
                         {
@@ -1602,7 +1705,9 @@ def review_and_repair_story_event(
                         {
                             "parsed": parsed,
                             "telemetry": telemetry,
+                            "messages": job["messages"],
                             "allowed_targets": job["allowed_targets"],
+                            "window_plan": job["window_plan"],
                             "batch_number": job["batch_number"],
                             "batch_count": job["batch_count"],
                         }
@@ -1636,6 +1741,8 @@ def review_and_repair_story_event(
                             payload=telemetry,
                         )
                 except Exception as exc:
+                    if job.get("thinking_publisher") is not None:
+                        job["thinking_publisher"].finish(status="failed")
                     telemetry = getattr(exc, "telemetry", job["budget"])
                     error_state = state["chapter_errors"].setdefault(
                         chapter.chapter_index,
@@ -1707,13 +1814,36 @@ def review_and_repair_story_event(
                 }
                 summaries: dict[int, str] = {}
                 if chapter_result["mode"] == "window":
-                    batch = chapter_result["batches"][0]
-                    window_patches, summaries = normalize_structural_window_patches(
-                        batch["parsed"],
-                        {chapter_index: chapter},
-                        chapter_result["window_plan"],
-                        expected_base_content_hashes=expected_hashes,
-                    )
+                    window_patches: list[dict[str, Any]] = []
+                    for batch in sorted(
+                        chapter_result["batches"],
+                        key=lambda item: item["batch_number"],
+                    ):
+                        for validation_attempt in range(
+                            0,
+                            MAX_PATCH_VALIDATION_RETRIES + 1,
+                        ):
+                            try:
+                                current_patches, current_summaries = normalize_structural_window_patches(
+                                    batch["parsed"],
+                                    {chapter_index: chapter},
+                                    batch["window_plan"],
+                                    expected_base_content_hashes=expected_hashes,
+                                )
+                                break
+                            except ValueError as exc:
+                                if validation_attempt >= MAX_PATCH_VALIDATION_RETRIES:
+                                    raise
+                                retry_invalid_batch(
+                                    state=state,
+                                    chapter=chapter,
+                                    batch=batch,
+                                    error=str(exc),
+                                    attempt=validation_attempt + 1,
+                                    mode="window",
+                                )
+                        window_patches.extend(current_patches)
+                        summaries.update(current_summaries)
                     window_result = apply_structural_window_patches(
                         {chapter_index: chapter},
                         window_patches,
@@ -1730,14 +1860,33 @@ def review_and_repair_story_event(
                         chapter_result["batches"],
                         key=lambda item: item["batch_number"],
                     ):
-                        try:
-                            batch_patches = normalize_paragraph_patches(
-                                batch["parsed"],
-                                {chapter_index: chapter},
-                                allowed_targets=batch["allowed_targets"],
-                                expected_base_content_hashes=expected_hashes,
-                            )
-                        except ValueError as exc:
+                        batch_error: ValueError | None = None
+                        for validation_attempt in range(
+                            0,
+                            MAX_PATCH_VALIDATION_RETRIES + 1,
+                        ):
+                            try:
+                                batch_patches = normalize_paragraph_patches(
+                                    batch["parsed"],
+                                    {chapter_index: chapter},
+                                    allowed_targets=batch["allowed_targets"],
+                                    expected_base_content_hashes=expected_hashes,
+                                )
+                                batch_error = None
+                                break
+                            except ValueError as exc:
+                                batch_error = exc
+                                if validation_attempt >= MAX_PATCH_VALIDATION_RETRIES:
+                                    break
+                                retry_invalid_batch(
+                                    state=state,
+                                    chapter=chapter,
+                                    batch=batch,
+                                    error=str(exc),
+                                    attempt=validation_attempt + 1,
+                                    mode="paragraph",
+                                )
+                        if batch_error is not None:
                             error_state = state["chapter_errors"].setdefault(
                                 chapter_index,
                                 {"error": "", "failed_batches": []},
@@ -1746,13 +1895,13 @@ def review_and_repair_story_event(
                                 {
                                     "batch_number": batch["batch_number"],
                                     "mode": "paragraph",
-                                    "error": str(exc),
+                                    "error": str(batch_error),
                                     "telemetry": batch["telemetry"],
                                 }
                             )
                             error_state["error"] = (
                                 f"第 {batch['batch_number']}/"
-                                f"{batch['batch_count']} 批补丁无效：{exc}"
+                                f"{batch['batch_count']} 批补丁无效：{batch_error}"
                             )
                             continue
                         for patch in batch_patches:
@@ -2055,12 +2204,25 @@ def execute_structural_component_retry(
         package.get("issues") or [],
     )
     started = time.monotonic()
-    plan_payload, plan_metrics = execute_patch_request_with_budget_retry(
-        revision_llm_config,
-        plan_messages,
-        initial_max_output_tokens=REVISION_MAX_OUTPUT_TOKENS,
-        expanded_max_output_tokens=REVISION_MAX_OUTPUT_TOKENS,
+    plan_thinking = ModelThinkingPublisher(
+        source_task,
+        source_step_key=f"{step_key}_plan",
+        model_role="writer",
+        model=revision_llm_config.model,
+        title="正文模型 · 结构修订重新规划",
     )
+    plan_thinking.start()
+    try:
+        plan_payload, plan_metrics = execute_patch_request_with_budget_retry(
+            revision_llm_config,
+            plan_messages,
+            on_activity=plan_thinking.append_activity,
+        )
+    except Exception:
+        plan_thinking.finish(status="failed")
+        raise
+    else:
+        plan_thinking.finish()
     plan_metrics["total_elapsed_seconds"] = round(time.monotonic() - started, 3)
     structural_plan = normalize_structural_repair_plan(
         plan_payload,
@@ -2087,31 +2249,98 @@ def execute_structural_component_retry(
         payload=telemetry,
     )
 
-    patch_messages = build_structural_window_patch_prompt(
-        novel,
-        story_event,
-        component_chapters,
-        structural_plan,
-    )
-    started = time.monotonic()
-    patch_payload, patch_metrics = execute_patch_request_with_budget_retry(
-        revision_llm_config,
-        patch_messages,
-        initial_max_output_tokens=REVISION_MAX_OUTPUT_TOKENS,
-        expanded_max_output_tokens=REVISION_MAX_OUTPUT_TOKENS,
-    )
-    patch_metrics["total_elapsed_seconds"] = round(time.monotonic() - started, 3)
-    window_patches, summaries = normalize_structural_window_patches(
-        patch_payload,
-        {index: chapters_by_index[index] for index in component_indexes},
-        structural_plan,
-        expected_base_content_hashes=base_content_hashes,
-    )
+    atomic_window_plans: list[dict[str, Any]] = []
+    for chapter_index, windows in structural_plan["windows_by_chapter"].items():
+        for window in windows:
+            atomic_window_plans.append({
+                **structural_plan,
+                "windows_by_chapter": {chapter_index: [window]},
+            })
+
+    window_patches: list[dict[str, Any]] = []
+    summaries: dict[int, str] = {}
+    patch_metrics: list[dict[str, Any]] = []
+    for window_number, atomic_plan in enumerate(atomic_window_plans, start=1):
+        patch_messages = build_structural_window_patch_prompt(
+            novel,
+            story_event,
+            component_chapters,
+            atomic_plan,
+        )
+        patch_payload: dict[str, Any] = {}
+        current_messages = patch_messages
+        validation_error = ""
+        for attempt in range(0, MAX_PATCH_VALIDATION_RETRIES + 1):
+            started = time.monotonic()
+            patch_thinking = ModelThinkingPublisher(
+                source_task,
+                source_step_key=(
+                    f"{step_key}_patch_{window_number}"
+                    + (f"_validation_retry_{attempt}" if attempt else "")
+                ),
+                model_role="writer",
+                model=revision_llm_config.model,
+                title=(
+                    f"正文模型 · 结构窗口补丁 {window_number}/{len(atomic_window_plans)}"
+                    + (f" · 校验纠正 {attempt}" if attempt else "")
+                ),
+            )
+            patch_thinking.start()
+            try:
+                patch_payload, current_metrics = execute_patch_request_with_budget_retry(
+                    revision_llm_config,
+                    current_messages,
+                    on_activity=patch_thinking.append_activity,
+                )
+            except Exception:
+                patch_thinking.finish(status="failed")
+                raise
+            else:
+                patch_thinking.finish()
+            current_metrics.update({
+                "window_number": window_number,
+                "window_count": len(atomic_window_plans),
+                "validation_attempt": attempt,
+                "total_elapsed_seconds": round(time.monotonic() - started, 3),
+            })
+            patch_metrics.append(current_metrics)
+            try:
+                current_patches, current_summaries = normalize_structural_window_patches(
+                    patch_payload,
+                    {index: chapters_by_index[index] for index in component_indexes},
+                    atomic_plan,
+                    expected_base_content_hashes=base_content_hashes,
+                )
+                window_patches.extend(current_patches)
+                summaries.update(current_summaries)
+                validation_error = ""
+                break
+            except ValueError as exc:
+                validation_error = str(exc)
+                if attempt >= MAX_PATCH_VALIDATION_RETRIES:
+                    raise
+                current_messages = build_patch_validation_retry_messages(
+                    patch_messages,
+                    patch_payload,
+                    error=validation_error,
+                    mode="window",
+                    window_plan=atomic_plan,
+                )
+        if validation_error:
+            raise ValueError(validation_error)
     results = apply_structural_window_patches(
         {index: chapters_by_index[index] for index in component_indexes},
         window_patches,
     )
-    telemetry["patch"] = patch_metrics
+    telemetry["patch"] = {
+        "atomic_windows": patch_metrics,
+        "request_count": len(patch_metrics),
+        "output_chars": sum(int(item.get("output_chars") or 0) for item in patch_metrics),
+        "total_elapsed_seconds": round(
+            sum(float(item.get("total_elapsed_seconds") or 0) for item in patch_metrics),
+            3,
+        ),
+    }
     telemetry["patch_count"] = len(window_patches)
 
     for chapter_index, result in results.items():
@@ -2370,17 +2599,14 @@ def retry_failed_event_revision_chapters(
                         len(action.get("paragraph_indexes", []))
                         for action in batch_actions
                     )
-                    max_output_tokens = REVISION_MAX_OUTPUT_TOKENS
                     _, current_telemetry = build_dynamic_revision_config(
                         revision_llm_config,
                         messages,
-                        max_output_tokens=max_output_tokens,
                     )
                     current_telemetry.update({
                         "batch_number": batch_number,
                         "batch_count": len(action_batches),
                         "batch_target_count": batch_target_count,
-                        "expanded_max_output_tokens": REVISION_MAX_OUTPUT_TOKENS,
                     })
                     emit_task_event(
                         db,
@@ -2397,9 +2623,25 @@ def retry_failed_event_revision_chapters(
                     )
                     started_at = time.monotonic()
                     last_activity_notice_at = 0.0
+                    retry_thinking = ModelThinkingPublisher(
+                        source_task,
+                        source_step_key=(
+                            f"revision_package_{package_number}"
+                            f"_chapter_{chapter_index}_batch_{batch_number}"
+                        ),
+                        model_role="writer",
+                        model=revision_llm_config.model,
+                        title=(
+                            f"正文模型 · 第 {chapter_index} 章补丁重试 "
+                            f"{batch_number}/{len(action_batches)}"
+                        ),
+                        chapter_index=chapter_index,
+                    )
+                    retry_thinking.start()
 
                     def report_patch_activity(activity: dict[str, Any]) -> None:
                         nonlocal last_activity_notice_at
+                        retry_thinking.append_activity(activity)
                         now = time.monotonic()
                         if now - last_activity_notice_at < 10:
                             return
@@ -2420,8 +2662,7 @@ def retry_failed_event_revision_chapters(
                             message=(
                                 "连接持续活跃；"
                                 f"已接收思考 {int(activity.get('reasoning_chars') or 0)} 字符、"
-                                f"最终输出 {int(activity.get('output_chars') or 0)} 字符；"
-                                f"当前额度 {int(activity.get('max_output_tokens') or 0)} tokens"
+                                f"最终输出 {int(activity.get('output_chars') or 0)} 字符"
                             ),
                             progress=min(93, 91 + batch_number),
                             chapter_id=chapter.id,
@@ -2437,11 +2678,10 @@ def retry_failed_event_revision_chapters(
                         parsed, request_telemetry = execute_patch_request_with_budget_retry(
                             revision_llm_config,
                             messages,
-                            initial_max_output_tokens=max_output_tokens,
-                            expanded_max_output_tokens=REVISION_MAX_OUTPUT_TOKENS,
                             on_activity=report_patch_activity,
                         )
                     except Exception as exc:
+                        retry_thinking.finish(status="failed")
                         error_telemetry = getattr(exc, "telemetry", {})
                         current_telemetry.update({
                             "elapsed_seconds": round(time.monotonic() - started_at, 3),
@@ -2450,6 +2690,8 @@ def retry_failed_event_revision_chapters(
                         })
                         telemetry.update(current_telemetry)
                         raise
+                    else:
+                        retry_thinking.finish()
                     current_telemetry.update({
                         "elapsed_seconds": round(time.monotonic() - started_at, 3),
                         **request_telemetry,

@@ -8,10 +8,12 @@ import { apiFetch, setStoredUser } from "@/lib/api";
 const defaultForm = {
   llm_base_url: "https://api.openai.com/v1",
   llm_model: "gpt-4.1-mini",
+  llm_context_window_tokens: 128000,
   llm_api_key: "",
   review_llm_enabled: false,
   review_llm_base_url: "https://api.openai.com/v1",
   review_llm_model: "gpt-4.1-mini",
+  review_llm_context_window_tokens: 128000,
   review_llm_api_key: "",
   embedding_enabled: false,
   embedding_endpoint: "",
@@ -65,10 +67,12 @@ export default function PersonalizationPage() {
       ...defaultForm,
       llm_base_url: llm.base_url || defaultForm.llm_base_url,
       llm_model: llm.model || defaultForm.llm_model,
+      llm_context_window_tokens: Number(llm.context_window_tokens) || defaultForm.llm_context_window_tokens,
       llm_api_key: "",
       review_llm_enabled: Boolean(reviewLlm.enabled),
       review_llm_base_url: reviewLlm.base_url || llm.base_url || defaultForm.review_llm_base_url,
       review_llm_model: reviewLlm.model || llm.model || defaultForm.review_llm_model,
+      review_llm_context_window_tokens: Number(reviewLlm.context_window_tokens) || Number(llm.context_window_tokens) || defaultForm.review_llm_context_window_tokens,
       review_llm_api_key: "",
       embedding_enabled: Boolean(embedding.enabled),
       embedding_endpoint: embedding.endpoint || "",
@@ -118,6 +122,7 @@ export default function PersonalizationPage() {
     const reviewer = target === "reviewer";
     const baseUrl = reviewer ? form.review_llm_base_url : form.llm_base_url;
     const model = reviewer ? form.review_llm_model : form.llm_model;
+    const contextWindowTokens = reviewer ? form.review_llm_context_window_tokens : form.llm_context_window_tokens;
     const apiKey = reviewer ? form.review_llm_api_key : form.llm_api_key;
     const hasSavedKey = reviewer ? reviewApiKeyConfigured : apiKeyConfigured;
     const targetLabel = reviewer ? "审校模型" : "正文模型";
@@ -129,6 +134,7 @@ export default function PersonalizationPage() {
     try {
       if (!baseUrl.trim()) throw new Error("请填写 Base URL。");
       if (!model.trim()) throw new Error("请填写模型名称。");
+      if (Number(contextWindowTokens) < 4096) throw new Error("模型最大上下文不能小于 4096 Token。");
       if (!apiKey.trim() && !hasSavedKey) throw new Error("请填写 API Key，或先保存已有密钥。");
 
       const result = await apiFetch("/api/users/me/model-api/test", {
@@ -137,7 +143,8 @@ export default function PersonalizationPage() {
           target,
           base_url: baseUrl,
           model,
-          api_key: apiKey
+          api_key: apiKey,
+          context_window_tokens: Number(contextWindowTokens)
         })
       });
       setModelTests((current) => ({
@@ -210,6 +217,12 @@ export default function PersonalizationPage() {
       if (form.review_llm_enabled && !reviewApiKeyConfigured && !form.review_llm_api_key.trim()) {
         throw new Error("开启独立审校模型后，请填写审校模型 API Key。");
       }
+      if (Number(form.llm_context_window_tokens) < 4096) {
+        throw new Error("正文模型最大上下文不能小于 4096 Token。");
+      }
+      if (form.review_llm_enabled && Number(form.review_llm_context_window_tokens) < 4096) {
+        throw new Error("审校模型最大上下文不能小于 4096 Token。");
+      }
       if (form.tavily_enabled && !tavilyApiKeyConfigured && !form.tavily_api_key.trim()) {
         throw new Error("开启 Tavily 网络检索后，请填写 Tavily API Key。");
       }
@@ -232,6 +245,7 @@ export default function PersonalizationPage() {
               provider: "openai_compatible",
               base_url: form.llm_base_url,
               model: form.llm_model,
+              context_window_tokens: Number(form.llm_context_window_tokens),
               api_key: editingKeys.writer ? form.llm_api_key : ""
             },
             review_llm: {
@@ -239,6 +253,7 @@ export default function PersonalizationPage() {
               provider: "openai_compatible",
               base_url: form.review_llm_base_url,
               model: form.review_llm_model,
+              context_window_tokens: Number(form.review_llm_context_window_tokens),
               api_key: editingKeys.reviewer ? form.review_llm_api_key : ""
             },
             embedding: {
@@ -285,7 +300,6 @@ export default function PersonalizationPage() {
   return (
     <AppShell
       title="设置"
-      subtitle="分别配置正文生成、质量审校、Qwen RAG 与网络检索"
       actions={editing ? (
         <div className="inline-actions">
           <button className="secondary-button" onClick={cancelEdit}>取消</button>
@@ -301,7 +315,6 @@ export default function PersonalizationPage() {
         <div className="panel-header">
           <div>
             <div className="panel-title">模型 API 配置</div>
-            <div className="panel-subtitle">建议分工：深度思考模型负责事件规划、质量审校和样本经验总结，Flash 模型负责章节正文和局部补丁。</div>
           </div>
           <span className={`tag ${apiKeyConfigured ? "green" : "yellow"}`}>{apiKeyConfigured ? "正文模型已配置" : "正文模型未配置"}</span>
         </div>
@@ -349,6 +362,18 @@ export default function PersonalizationPage() {
               <div className="field">
                 <label>模型</label>
                 <input name="writer_model" autoComplete="off" disabled={!editing} value={form.llm_model} onChange={(event) => updateForm("llm_model", event.target.value)} placeholder="gpt-4.1-mini" />
+              </div>
+              <div className="field">
+                <label>最大上下文 Token</label>
+                <input
+                  name="writer_context_window_tokens"
+                  type="number"
+                  min="4096"
+                  step="1024"
+                  disabled={!editing}
+                  value={form.llm_context_window_tokens}
+                  onChange={(event) => updateForm("llm_context_window_tokens", event.target.value)}
+                />
               </div>
               <div className="field">
                 <label>API Key</label>
@@ -404,6 +429,18 @@ export default function PersonalizationPage() {
                   <input name="reviewer_model" autoComplete="off" disabled={!editing} value={form.review_llm_model} onChange={(event) => updateForm("review_llm_model", event.target.value)} placeholder="填写深度思考模型名称" />
                 </div>
                 <div className="field">
+                  <label>最大上下文 Token</label>
+                  <input
+                    name="reviewer_context_window_tokens"
+                    type="number"
+                    min="4096"
+                    step="1024"
+                    disabled={!editing}
+                    value={form.review_llm_context_window_tokens}
+                    onChange={(event) => updateForm("review_llm_context_window_tokens", event.target.value)}
+                  />
+                </div>
+                <div className="field">
                   <label>API Key</label>
                   <input
                     disabled={!editing}
@@ -435,9 +472,6 @@ export default function PersonalizationPage() {
         <div className="panel-header">
           <div>
             <div className="panel-title">Qwen RAG（样本 + 热梗）</div>
-            <div className="panel-subtitle">
-              同一组远程 Embedding API 同时服务样本经验文档，以及系统内置和用户扩展热梗库。向量维度以模型 API 的实际返回为准。
-            </div>
           </div>
           <span className={`tag ${form.embedding_enabled && embeddingApiKeyConfigured ? "green" : "yellow"}`}>
             {!form.embedding_enabled ? "未启用" : (embeddingApiKeyConfigured ? "已启用" : "待配置")}
@@ -542,14 +576,13 @@ export default function PersonalizationPage() {
         <div className="panel-header">
           <div>
             <div className="panel-title">Tavily 网络检索</div>
-            <div className="panel-subtitle">
-              资料检索独立于 LLM 服务；开启后系统会在剧情事件规划后按需检索。
-              {" "}<a className="settings-external-link" href="https://www.tavily.com/" target="_blank" rel="noreferrer">访问 Tavily 官网 ↗</a>
-            </div>
           </div>
-          <span className={`tag ${form.tavily_enabled && tavilyApiKeyConfigured ? "green" : "yellow"}`}>
-            {!form.tavily_enabled ? "未启用" : (tavilyApiKeyConfigured ? "已启用" : "待配置")}
-          </span>
+          <div className="inline-actions">
+            <a className="settings-external-link" href="https://www.tavily.com/" target="_blank" rel="noreferrer">官网 ↗</a>
+            <span className={`tag ${form.tavily_enabled && tavilyApiKeyConfigured ? "green" : "yellow"}`}>
+              {!form.tavily_enabled ? "未启用" : (tavilyApiKeyConfigured ? "已启用" : "待配置")}
+            </span>
+          </div>
         </div>
         <div className="panel-body settings-stack">
           <div className="settings-toggle-row">

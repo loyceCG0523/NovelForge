@@ -6,7 +6,6 @@
 
 from __future__ import annotations
 
-import math
 import time
 from dataclasses import replace
 from typing import Any
@@ -20,9 +19,9 @@ from app.models.generation_task import GenerationTask
 from app.models.novel import Novel
 from app.models.review_issue import ReviewIssue
 from app.models.story_event import StoryEvent
-from app.services.llm_client import LLMClient, LLMConfig
+from app.services.llm_client import LLMClient, LLMConfig, build_context_token_budget
 from app.services.pacing_plan import is_closing_event
-from app.services.task_events import emit_task_event
+from app.services.task_events import ModelThinkingPublisher, emit_task_event
 
 
 EVENT_QUALITY_SOURCE = "event_quality_checker"
@@ -39,6 +38,10 @@ ALLOWED_EVENT_ISSUE_TYPES = {
     "event_foreshadowing",
     "event_repetition",
     "event_plan_consistency",
+    "event_supporting_element_dominance",
+    "event_genre_delivery",
+    "event_meme_fit",
+    "event_prose_style",
 }
 ALLOWED_SEVERITIES = {"low", "medium", "high"}
 
@@ -161,7 +164,17 @@ def build_event_quality_prompt(
                 "重点检查：事件起因是否明确，冲突是否逐章升级，是否存在重复空转；"
                 "对照 narrative_contract 检查事件是否兑现本书主类型承诺、转折和阶段回报；"
                 "职业、技能、身份、设定名词或日常流程若不是主类型核心，只能承担能力、压力、代价或翻盘工具，"
-                "不能连续主导章节；流程完成本身不算读者回报。此规则适用于所有题材，不预设具体类型。"
+                "不能连续主导章节，也不能成为人物固定口癖、感情比喻或主要笑点；流程完成本身不算读者回报。"
+                "若主类型是喜剧，逐章指出实际成立的因果型喜剧节拍；职业术语反差、网络热梗、轻微吐槽和旁白评价不计数，"
+                "不能因为计划声称‘笑点密集’就判定兑现。"
+                "逐条核对正文使用的网络热梗是否符合真实含义、人物关系、熟悉程度、情绪、语域和当前话题，"
+                "并且有自然铺垫、对方回应或剧情后果；任何一项不成立都应建议删除。"
+                "若多章持续出现提纲式短句、动作逐条罗列、全员完整书面对白、缺少自然停顿改口或句间承接，"
+                "或对白只有台词清单而没有‘刺激—人物化理解/回避—可见反应—对方接招—局面变化’，"
+                "旁白直接宣布情绪而没有关系微动作证据，或把甲的台词与乙的反应、心理、判断、发言塞进同一段，"
+                "应作为事件级语言风格问题指出。"
+                "检查相邻章节是否由上一章未完回应、动作或后果接入下一章第一拍；若反复总结式收尾后另起炉灶，"
+                "也应判为事件级节奏问题。此规则适用于所有题材，不预设具体类型。"
                 "人物关系/动机是否推进，人物行为是否符合人物档案、职业能力、基本常识和安全意识；"
                 "检查每个物品或资源由谁持有、谁能使用、状态如何变化，不能只检查名称是否重复；"
                 "检查时间线、因果链和现实设备用途，不能把不会做饭、不善社交等局部弱点泛化为低常识或低专业能力；"
@@ -174,7 +187,7 @@ def build_event_quality_prompt(
                 '  "strengths": ["优点"],\n'
                 '  "issues": [\n'
                 "    {\n"
-                '      "issue_type": "event_closure|event_pacing|event_conflict|event_character_arc|event_character_consistency|event_logic|event_timeline|event_resource_state|event_foreshadowing|event_repetition|event_plan_consistency",\n'
+                '      "issue_type": "event_closure|event_pacing|event_conflict|event_character_arc|event_character_consistency|event_logic|event_timeline|event_resource_state|event_foreshadowing|event_repetition|event_plan_consistency|event_supporting_element_dominance|event_genre_delivery|event_meme_fit|event_prose_style",\n'
                 '      "severity": "low|medium|high",\n'
                 '      "message": "给用户看的简短问题说明",\n'
                 '      "evidence": "问题依据，指出章节或计划",\n'
@@ -345,24 +358,9 @@ def check_event_quality(
         chapter_material,
         chapter_issues,
     )
+    context_budget = build_context_token_budget(llm_config, messages)
     prompt_chars = sum(len(str(message.get("content") or "")) for message in messages)
-    base_timeout_seconds = max(
-        90,
-        min(300, int(60 + prompt_chars / 200)),
-    )
-    base_total_timeout_seconds = max(
-        180,
-        min(900, base_timeout_seconds + 400),
-    )
-    timeout_seconds = math.ceil(
-        max(float(llm_config.timeout_seconds), base_timeout_seconds * 1.5)
-    )
-    total_timeout_seconds = math.ceil(
-        max(
-            float(llm_config.total_timeout_seconds or 0),
-            base_total_timeout_seconds * 1.5,
-        )
-    )
+    timeout_seconds = 60
     output_chars = 0
     first_delta_at: float | None = None
     started_at = time.monotonic()
@@ -374,9 +372,24 @@ def check_event_quality(
         output_chars += len(delta)
 
     last_activity_notice_at = 0.0
+    review_thinking = (
+        ModelThinkingPublisher(
+            task,
+            source_step_key="event_review_stream",
+            model_role="reviewer",
+            model=llm_config.model,
+            title="审校模型 · 事件整体复检",
+        )
+        if task is not None
+        else None
+    )
+    if review_thinking is not None:
+        review_thinking.start()
 
     def on_activity(activity: dict[str, Any]) -> None:
         nonlocal last_activity_notice_at
+        if review_thinking is not None:
+            review_thinking.append_activity(activity)
         if task is None:
             return
         now = time.monotonic()
@@ -403,7 +416,7 @@ def check_event_quality(
         replace(
             llm_config,
             timeout_seconds=float(timeout_seconds),
-            total_timeout_seconds=float(total_timeout_seconds),
+            total_timeout_seconds=None,
             max_retries=(
                 0
                 if prompt_chars > 30000
@@ -411,20 +424,28 @@ def check_event_quality(
             ),
         )
     )
-    _, parsed = client.complete_json(
-        messages,
-        max_tokens=10000,
-        stream=True,
-        on_raw_delta=on_raw_delta,
-        on_activity=on_activity,
-    )
+    try:
+        _, parsed = client.complete_json(
+            messages,
+            stream=True,
+            on_raw_delta=on_raw_delta,
+            on_activity=on_activity,
+        )
+    except Exception:
+        if review_thinking is not None:
+            review_thinking.finish(status="failed")
+        raise
+    else:
+        if review_thinking is not None:
+            review_thinking.finish()
     report = normalize_event_quality_result(parsed)
     report["request_telemetry"] = {
+        **context_budget,
         "streaming": True,
         "prompt_chars": prompt_chars,
         "activity_timeout_seconds": timeout_seconds,
         "first_token_timeout_seconds": timeout_seconds,
-        "total_timeout_seconds": total_timeout_seconds,
+        "total_timeout_seconds": None,
         "first_delta_seconds": (
             round(first_delta_at - started_at, 3)
             if first_delta_at is not None

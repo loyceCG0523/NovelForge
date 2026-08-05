@@ -8,8 +8,6 @@ from unittest.mock import patch
 from app.models.chapter import Chapter
 from app.services.chapter_review_cycle import (
     ChapterReviewRequestError,
-    MAX_CHAPTER_PATCH_OUTPUT_TOKENS,
-    MAX_CHAPTER_REVIEW_OUTPUT_TOKENS,
     MAX_CHAPTER_SUGGESTIONS,
     apply_chapter_patches_with_isolation,
     build_dynamic_chapter_review_config,
@@ -64,7 +62,7 @@ class ChapterReviewCycleTests(unittest.TestCase):
         for paragraph in chapter.content.split("\n\n"):
             self.assertIn(paragraph, user_prompt)
 
-    def test_larger_review_prompt_receives_more_time_without_unbounded_retries(self) -> None:
+    def test_review_uses_one_minute_silence_window_without_total_limit(self) -> None:
         config = LLMConfig(
             base_url="https://example.com/v1",
             api_key="test",
@@ -81,16 +79,12 @@ class ChapterReviewCycleTests(unittest.TestCase):
             [{"role": "user", "content": "长" * 20000}],
         )
 
-        self.assertGreater(
-            large["first_token_timeout_seconds"],
-            small["first_token_timeout_seconds"],
-        )
-        self.assertGreaterEqual(
-            large_config.total_timeout_seconds,
-            large_config.timeout_seconds,
-        )
-        self.assertEqual(small["first_token_timeout_seconds"], 135)
-        self.assertLessEqual(large_config.total_timeout_seconds, 1350)
+        self.assertEqual(small["first_token_timeout_seconds"], 60)
+        self.assertEqual(large["first_token_timeout_seconds"], 60)
+        self.assertIsNone(small_config.total_timeout_seconds)
+        self.assertIsNone(large_config.total_timeout_seconds)
+        self.assertIsNone(small["total_timeout_seconds"])
+        self.assertIsNone(large["total_timeout_seconds"])
         self.assertEqual(small_config.max_retries, 1)
         self.assertEqual(large_config.max_retries, 1)
 
@@ -127,9 +121,8 @@ class ChapterReviewCycleTests(unittest.TestCase):
         self.assertTrue(telemetry["streaming"])
         self.assertEqual(telemetry["output_chars"], len('{"audit_results":[]}'))
         self.assertEqual(telemetry["transport"]["mode"], "non_stream_fallback")
-        self.assertEqual(MAX_CHAPTER_REVIEW_OUTPUT_TOKENS, 10000)
-        self.assertEqual(MAX_CHAPTER_PATCH_OUTPUT_TOKENS, 20000)
-        self.assertEqual(client.complete_json.call_args.kwargs["max_tokens"], 10000)
+        self.assertGreater(telemetry["remaining_context_tokens"], 10000)
+        self.assertNotIn("max_tokens", client.complete_json.call_args.kwargs)
         self.assertLessEqual(client_class.call_args.args[0].max_retries, 1)
 
     def test_failed_chapter_review_request_preserves_transport_telemetry(self) -> None:
@@ -315,6 +308,35 @@ class ChapterReviewCycleTests(unittest.TestCase):
         self.assertEqual(suggestions[0]["paragraph_indexes"], [1])
         self.assertEqual(suggestions[0]["source"], "punctuation_style_checker")
 
+    def test_rule_based_checker_finds_reversed_chinese_quotes(self) -> None:
+        chapter = Chapter(
+            chapter_index=1,
+            title="雨夜",
+            word_count=20,
+            content='林予安被公司正式“毕业“了。\n\n他问：”毕业有学位证吗？“',
+        )
+
+        suggestions = build_rule_based_chapter_suggestions(chapter)
+
+        self.assertEqual(len(suggestions), 1)
+        self.assertEqual(suggestions[0]["issue_type"], "grammar")
+        self.assertEqual(suggestions[0]["severity"], "high")
+        self.assertEqual(suggestions[0]["paragraph_indexes"], [1, 2])
+        self.assertIn("共涉及 2 段", suggestions[0]["problem"])
+        self.assertIn("只修正成对标点", suggestions[0]["repair_scope"])
+
+    def test_rule_based_checker_accepts_balanced_nested_punctuation(self) -> None:
+        chapter = Chapter(
+            chapter_index=1,
+            title="雨夜",
+            word_count=20,
+            content='她问：“你读过《长夜》吗？”他答：“读过‘旧版’。”',
+        )
+
+        suggestions = build_rule_based_chapter_suggestions(chapter)
+
+        self.assertEqual(suggestions, [])
+
     def test_rule_suggestions_take_priority_without_exceeding_twenty(self) -> None:
         rule = [
             {
@@ -470,6 +492,7 @@ class ChapterReviewCycleTests(unittest.TestCase):
 
         self.assertIn("不得重写整章", system_prompt)
         self.assertIn("replace 只返回完整单段", system_prompt)
+        self.assertIn("人物主体混段时用 split", system_prompt)
         self.assertIn("不要返回 old_text", system_prompt)
         self.assertIn("repair_scope", system_prompt)
         self.assertIn("不能生硬补解释", system_prompt)
@@ -480,6 +503,7 @@ class ChapterReviewCycleTests(unittest.TestCase):
         self.assertIn("异常缩短或丢失关键表述的补丁会被拒绝", system_prompt)
         self.assertLess(len(system_prompt), 700)
         output_contract = messages[1]["content"].split("\n\n", 1)[0]
+        self.assertIn("new_paragraphs", output_contract)
         self.assertNotIn('"old_text":', output_contract)
         self.assertNotIn('"chapter_index":', output_contract)
         self.assertEqual(payload["target_suggestions"], [suggestion])
@@ -925,6 +949,53 @@ class ChapterReviewCycleTests(unittest.TestCase):
         self.assertEqual(
             content,
             "林予安推开门。\n\n门没有锁，她已经站在屋里，朝他招了招手。",
+        )
+
+    def test_writer_can_split_dialogue_from_another_characters_reaction(self) -> None:
+        chapter = self.build_chapter()
+        chapter.content = (
+            "雨还没停。\n\n"
+            "“进来会弄湿我地板，门口成本更低。”林予安张了张嘴。他头一回见人这样算收留成本。\n\n"
+            "门内安静下来。"
+        )
+        chapter.context_snapshot = {
+            "constraints": {"chapter_word_range": {"min": 1, "max": 300}}
+        }
+        suggestions = [{"issue_type": "prose_rhythm", "paragraph_indexes": [2]}]
+
+        accepted, rejected, _ = normalize_chapter_writer_patches(
+            {
+                "patches": [
+                    {
+                        "paragraph_index": 2,
+                        "operation": "split",
+                        "new_paragraphs": [
+                            "“进来会弄湿我地板，门口成本更低。”",
+                            "林予安张了张嘴。他头一回见人这样算收留成本。",
+                        ],
+                        "reason": "台词与听者反应属于不同人物",
+                    }
+                ]
+            },
+            chapter,
+            suggestions,
+        )
+
+        self.assertEqual(rejected, [])
+        self.assertEqual(accepted[0]["operation"], "split")
+        with patch(
+            "app.services.event_revision_service.build_word_guard_report",
+            return_value={"within_range": True, "delta": 0},
+        ):
+            content, _validation, applied, application_rejections = (
+                apply_chapter_patches_with_isolation(chapter, accepted)
+            )
+        self.assertEqual(application_rejections, [])
+        self.assertEqual(len(applied), 1)
+        self.assertEqual(
+            content,
+            "雨还没停。\n\n“进来会弄湿我地板，门口成本更低。”\n\n"
+            "林予安张了张嘴。他头一回见人这样算收留成本。\n\n门内安静下来。",
         )
 
     def test_application_guard_failure_isolated_to_one_patch(self) -> None:

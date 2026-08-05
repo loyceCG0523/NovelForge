@@ -6,7 +6,8 @@ import { useRouter, useSearchParams } from "next/navigation";
 import AppShell from "@/components/AppShell";
 import EmptyState from "@/components/EmptyState";
 import TaskExecutionPanel from "@/components/TaskExecutionPanel";
-import { apiFetch } from "@/lib/api";
+import { apiFetch, isTaskInFlight } from "@/lib/api";
+import { useLiveRefresh } from "@/lib/useLiveRefresh";
 
 const productionModes = {
   auto: {
@@ -51,13 +52,14 @@ function WorkbenchContent() {
   const [pendingProductionMode, setPendingProductionMode] = useState("");
   const [testRunScope, setTestRunScope] = useState("event");
   const modePickerRef = useRef(null);
+  const taskEventCursorRef = useRef(0);
 
   const novelIdFromUrl = searchParams.get("novel");
   const storyEvent = dashboard?.current_story_event;
   const autoRun = dashboard?.current_auto_run;
   const activeAgentTask = useMemo(
     () => (dashboard?.latest_tasks || []).find(
-      (task) => ["produce_novel", "generate_story_event", "continue_story_event", "check_story_event_quality"].includes(task.task_type) && ["queued", "running"].includes(task.status)
+      (task) => ["produce_novel", "generate_story_event", "continue_story_event", "check_story_event_quality"].includes(task.task_type) && isTaskInFlight(task.status)
     ),
     [dashboard]
   );
@@ -77,36 +79,58 @@ function WorkbenchContent() {
   const activityTaskFailure = activityTask?.status === "failed"
     ? `本次生成失败：${activityTask.error_message || "请查看正文 Worker 日志后重试"}`
     : "";
+  const dashboardNeedsRefresh = Boolean(
+    selectedId
+    && (
+      trackingTaskId
+      || activeAgentTask
+      || autoRun?.status === "running"
+      || isTaskInFlight(autoRun?.task_status)
+    )
+  );
 
   useEffect(() => {
     setTaskEvents([]);
     setRevisionPatches([]);
-  }, [selectedId]);
-
-  useEffect(() => {
-    if (!selectedId || !activityTaskId) return undefined;
-    let stopped = false;
-    async function pollActivity() {
-      try {
-        const [events, patches] = await Promise.all([
-          apiFetch(`/api/novels/${selectedId}/tasks/${activityTaskId}/events?limit=500`),
-          apiFetch(`/api/novels/${selectedId}/tasks/${activityTaskId}/revision-patches`)
-        ]);
-        if (!stopped) {
-          setTaskEvents(events);
-          setRevisionPatches(patches);
-        }
-      } catch (err) {
-        if (!stopped && !String(err.message).includes("404")) setError(err.message);
-      }
-    }
-    pollActivity();
-    const timer = window.setInterval(pollActivity, 1500);
-    return () => {
-      stopped = true;
-      window.clearInterval(timer);
-    };
+    taskEventCursorRef.current = 0;
   }, [selectedId, activityTaskId]);
+
+  useLiveRefresh({
+    enabled: Boolean(selectedId && activityTaskId),
+    intervalMs: 1500,
+    refresh: async () => {
+      const patchesPromise = apiFetch(`/api/novels/${selectedId}/tasks/${activityTaskId}/revision-patches`);
+      const incomingEvents = [];
+      let cursor = taskEventCursorRef.current;
+      for (let page = 0; page < 20; page += 1) {
+        const batch = await apiFetch(
+          `/api/novels/${selectedId}/tasks/${activityTaskId}/events?after_sequence=${cursor}&limit=500`
+        );
+        incomingEvents.push(...batch);
+        if (batch.length) cursor = Number(batch.at(-1)?.sequence_no || cursor);
+        if (batch.length < 500) break;
+      }
+      const patches = await patchesPromise;
+      if (incomingEvents.length) {
+        taskEventCursorRef.current = cursor;
+        setTaskEvents((current) => {
+          const bySequence = new Map(
+            current.map((event) => [Number(event.sequence_no), event])
+          );
+          incomingEvents.forEach((event) => {
+            bySequence.set(Number(event.sequence_no), event);
+          });
+          return [...bySequence.values()].sort(
+            (left, right) => Number(left.sequence_no) - Number(right.sequence_no)
+          );
+        });
+      }
+      setRevisionPatches(patches);
+    },
+    onError: (err) => {
+      if (!String(err.message).includes("404")) setError(err.message);
+    }
+  });
 
   async function loadProjects() {
     // 先拿作品列表，再决定当前要展示 URL 指定作品还是默认第一部作品。
@@ -150,43 +174,38 @@ function WorkbenchContent() {
     return () => document.removeEventListener("mousedown", closeOnOutsideClick);
   }, [modeMenuOpen]);
 
-  useEffect(() => {
-    if (!selectedId || !trackingTaskId) return undefined;
+  useLiveRefresh({
+    enabled: dashboardNeedsRefresh,
+    intervalMs: 1800,
+    refresh: () => loadDashboard(selectedId),
+    onError: (err) => setError(err.message)
+  });
 
-    let stopped = false;
-    async function pollTask() {
-      try {
-        const task = await apiFetch(`/api/novels/${selectedId}/tasks/${trackingTaskId}`);
-        await loadDashboard(selectedId);
-        if (stopped) return;
-
-        if (task.status === "completed") {
-          setMessage(task.task_type === "produce_novel" ? "自动生产任务已完成，工作台数据已刷新" : "剧情事件任务已完成，工作台数据已刷新");
-          setTrackingTaskId("");
-        } else if (task.status === "cancelled") {
-          setMessage("已暂停：Worker 重启前遗留的任务已回收，可重新继续生成。");
-          setTrackingTaskId("");
-        } else if (task.status === "failed") {
-          setError(`Agent 执行失败：${task.error_message || "请查看 Worker 日志"}`);
-          setTrackingTaskId("");
-        } else {
-          setMessage(`${task.result_payload?.graph_status || "自动生产 Agent"}：${task.progress || 0}%`);
-        }
-      } catch (err) {
-        if (!stopped) {
-          setError(err.message);
-          setTrackingTaskId("");
-        }
+  useLiveRefresh({
+    enabled: Boolean(selectedId && trackingTaskId),
+    intervalMs: 2500,
+    refresh: async () => {
+      const task = await apiFetch(`/api/novels/${selectedId}/tasks/${trackingTaskId}`);
+      await loadDashboard(selectedId);
+      setError("");
+      if (task.status === "completed") {
+        setMessage(task.task_type === "produce_novel" ? "自动生产任务已完成，工作台数据已刷新" : "剧情事件任务已完成，工作台数据已刷新");
+        setTrackingTaskId("");
+      } else if (task.status === "waiting") {
+        setMessage(task.result_payload?.graph_status || "当前阶段已结束，工作台状态已刷新。");
+        setTrackingTaskId("");
+      } else if (task.status === "cancelled") {
+        setMessage("已暂停：未完成的任务已回收，可重新继续生成。");
+        setTrackingTaskId("");
+      } else if (task.status === "failed") {
+        setError(`Agent 执行失败：${task.error_message || "请查看 Worker 日志"}`);
+        setTrackingTaskId("");
+      } else {
+        setMessage(`${task.result_payload?.graph_status || "自动生产 Agent"}：${task.progress || 0}%`);
       }
-    }
-
-    pollTask();
-    const timer = window.setInterval(pollTask, 2500);
-    return () => {
-      stopped = true;
-      window.clearInterval(timer);
-    };
-  }, [selectedId, trackingTaskId]);
+    },
+    onError: (err) => setError(err.message)
+  });
 
   async function runAgentTask(taskType = "generate_chapter", inputPayload = {}) {
     // 这里创建的是异步 Agent 任务；真正执行由 apps/worker 消费 Redis 队列完成。
@@ -333,7 +352,7 @@ function WorkbenchContent() {
       ].includes(autoRun?.payload?.stop_reason);
       const resumeLabel = needsWordRevision
         ? "继续修正本章字数"
-        : (failedQualityRevision ? "重试失败的审校" : (needsQualityRevision ? "继续修复事件质量" : "继续自动生产"));
+        : (failedQualityRevision ? "重试失败的事件生成" : (needsQualityRevision ? "继续修复事件质量" : "继续自动生产"));
       return <button className="primary-button" disabled={Boolean(trackingTaskId || activeAgentTask)} onClick={resumeAutoProduction}>{resumeLabel}</button>;
     }
     return (
@@ -394,7 +413,6 @@ function WorkbenchContent() {
   return (
     <AppShell
       title="创作工作台"
-      subtitle="聚焦生成流程、章节正文与局部修改"
       actions={
         <div className="workbench-actions">
           <select className="workbench-project-select" value={selectedId} onChange={(event) => setSelectedId(event.target.value)}>

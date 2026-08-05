@@ -15,12 +15,12 @@ const navItems = [
   { href: "/projects", label: "作品管理", icon: "▦" },
   { href: "/research", label: "资料检索", icon: "⌕" },
   { href: "/meme-library", label: "热梗库", icon: "◇" },
-  { href: "/sample-analysis", label: "样本分析", icon: "▧" }
+  { href: "/sample-analysis", label: "样本协作", icon: "▧" }
 ];
 
 const AVATAR_CROP_SIZE = 220;
 
-export default function AppShell({ title, subtitle, actions, children }) {
+export default function AppShell({ title, actions, children }) {
   // AppShell 统一承载鉴权检查、侧边栏、顶部标题区和页面内容容器。
   const pathname = usePathname();
   const router = useRouter();
@@ -314,7 +314,6 @@ export default function AppShell({ title, subtitle, actions, children }) {
         <header className="topbar">
           <div className="title-block">
             <h1>{title}</h1>
-            <p>{subtitle}</p>
           </div>
           <div className="top-actions">{actions}</div>
         </header>

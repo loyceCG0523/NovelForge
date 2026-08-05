@@ -8,6 +8,7 @@ from app.services.event_revision_service import (
     apply_paragraph_patches,
     apply_structural_window_patches,
     build_contiguous_window_repair_plan,
+    build_patch_validation_retry_messages,
     build_patch_action_batches,
     build_dynamic_revision_config,
     build_event_repair_packages,
@@ -17,7 +18,6 @@ from app.services.event_revision_service import (
     normalize_structural_repair_plan,
     normalize_structural_window_patches,
     repair_package_requires_structural_replan,
-    REVISION_MAX_OUTPUT_TOKENS,
     RevisionRequestError,
     split_chapter_paragraphs,
     text_hash,
@@ -120,6 +120,44 @@ class ParagraphPatchTests(unittest.TestCase):
         self.assertIn("张江高科", paragraphs[1])
         self.assertEqual(patches[0]["base_content_hash"], text_hash(chapter.content))
         self.assertLessEqual(validation["after"]["delta"], validation["before"]["delta"])
+
+    def test_event_patch_can_explicitly_split_mixed_character_paragraph(self) -> None:
+        chapter = self.build_chapter()
+        chapter.content = (
+            "第一段保持不变。\n\n"
+            "“门禁卡在这里。”林予安愣了一下。他伸手去接。\n\n"
+            "第三段也保持不变。"
+        )
+        patches = normalize_paragraph_patches(
+            {
+                "patches": [
+                    {
+                        "chapter_index": 2,
+                        "paragraph_index": 2,
+                        "operation": "split",
+                        "new_paragraphs": [
+                            "“门禁卡在这里。”",
+                            "林予安愣了一下。他伸手去接。",
+                        ],
+                        "reason": "说话者与听者反应分段",
+                    }
+                ]
+            },
+            {2: chapter},
+        )
+
+        content, _validation = apply_paragraph_patches(chapter, patches)
+
+        self.assertEqual(patches[0]["operation"], "split")
+        self.assertEqual(
+            split_chapter_paragraphs(content),
+            [
+                "第一段保持不变。",
+                "“门禁卡在这里。”",
+                "林予安愣了一下。他伸手去接。",
+                "第三段也保持不变。",
+            ],
+        )
 
     def test_patch_binds_server_text_instead_of_model_echo(self) -> None:
         chapter = self.build_chapter()
@@ -276,6 +314,24 @@ class ParagraphPatchTests(unittest.TestCase):
             2200,
         )
 
+    def test_very_large_contiguous_compression_keeps_four_atomic_windows(self) -> None:
+        chapter = Chapter(
+            chapter_index=4,
+            title="测试章",
+            content="\n\n".join(f"第{i}段内容。" for i in range(1, 50)),
+            summary="摘要",
+        )
+        plan = build_contiguous_window_repair_plan(
+            chapter,
+            [{
+                "paragraph_indexes": list(range(3, 44)),
+                "instruction": "压缩重复流程，用人物行动和关系后果替换",
+            }],
+        )
+
+        self.assertIsNotNone(plan)
+        self.assertEqual(len(plan["windows_by_chapter"][4]), 4)
+
     def test_small_or_non_compression_actions_keep_paragraph_patches(self) -> None:
         chapter = Chapter(
             chapter_index=5,
@@ -388,7 +444,7 @@ class ParagraphPatchTests(unittest.TestCase):
 
 
 class DynamicRevisionTimeoutTests(unittest.TestCase):
-    def test_larger_prompt_receives_longer_first_token_timeout(self) -> None:
+    def test_revision_uses_one_minute_silence_window_without_total_limit(self) -> None:
         config = LLMConfig(
             base_url="https://example.invalid",
             api_key="test",
@@ -397,20 +453,16 @@ class DynamicRevisionTimeoutTests(unittest.TestCase):
         _, small = build_dynamic_revision_config(
             config,
             [{"role": "user", "content": "短输入"}],
-            max_output_tokens=1000,
         )
         _, large = build_dynamic_revision_config(
             config,
-            [{"role": "user", "content": "长" * 50000}],
-            max_output_tokens=3000,
+            [{"role": "user", "content": "长" * 30000}],
         )
 
-        self.assertEqual(small["first_token_timeout_seconds"], 135)
-        self.assertGreater(
-            large["first_token_timeout_seconds"],
-            small["first_token_timeout_seconds"],
-        )
-        self.assertLessEqual(large["total_timeout_seconds"], 1350)
+        self.assertEqual(small["first_token_timeout_seconds"], 60)
+        self.assertEqual(large["first_token_timeout_seconds"], 60)
+        self.assertIsNone(small["total_timeout_seconds"])
+        self.assertIsNone(large["total_timeout_seconds"])
 
 
 class PatchBudgetRetryTests(unittest.TestCase):
@@ -435,33 +487,40 @@ class PatchBudgetRetryTests(unittest.TestCase):
             [[1, 2, 3], [4, 5, 6], [7, 8]],
         )
 
-    def test_only_reasoning_budget_exhaustion_expands_current_request(self) -> None:
-        first_error = RevisionRequestError(
-            "模型思考过程耗尽输出 Token",
-            {"failure_kind": "reasoning_budget_exhausted", "output_chars": 0},
+    def test_validation_retry_prompt_targets_only_failed_atomic_window(self) -> None:
+        messages = build_patch_validation_retry_messages(
+            [{"role": "user", "content": "原始请求"}],
+            {"window_patches": []},
+            error="结构改写扩写过多",
+            mode="window",
+            window_plan={
+                "windows_by_chapter": {
+                    5: [{"start_paragraph": 32, "end_paragraph": 41}]
+                }
+            },
         )
+        correction = messages[-1]["content"]
+
+        self.assertIn("结构改写扩写过多", correction)
+        self.assertIn('"start_paragraph":32', correction)
+        self.assertIn("不得超过 hard_max", correction)
+
+    def test_patch_request_uses_context_budget_once(self) -> None:
         with patch(
             "app.services.event_revision_service.execute_streaming_revision_request",
-            side_effect=[
-                first_error,
-                ({"patches": []}, {"output_chars": 20, "streaming": True}),
-            ],
+            return_value=({"patches": []}, {"output_chars": 20, "streaming": True}),
         ) as request:
             parsed, telemetry = execute_patch_request_with_budget_retry(
                 self.config,
                 self.messages,
-                initial_max_output_tokens=4000,
-                expanded_max_output_tokens=REVISION_MAX_OUTPUT_TOKENS,
             )
 
         self.assertEqual(parsed, {"patches": []})
-        self.assertTrue(telemetry["budget_retry"])
-        self.assertEqual(
-            [call.kwargs["max_output_tokens"] for call in request.call_args_list],
-            [4000, 10000],
-        )
+        self.assertFalse(telemetry["budget_retry"])
+        self.assertEqual(request.call_count, 1)
+        self.assertNotIn("max_output_tokens", request.call_args.kwargs)
 
-    def test_default_revision_output_limit_is_ten_thousand_tokens(self) -> None:
+    def test_revision_budget_uses_remaining_context(self) -> None:
         with patch(
             "app.services.event_revision_service.execute_streaming_revision_request",
             return_value=(
@@ -474,10 +533,7 @@ class PatchBudgetRetryTests(unittest.TestCase):
                 self.messages,
             )
 
-        self.assertEqual(
-            request.call_args.kwargs["max_output_tokens"],
-            10000,
-        )
+        self.assertNotIn("max_output_tokens", request.call_args.kwargs)
 
     def test_other_failures_are_not_expensively_retried(self) -> None:
         first_error = RevisionRequestError(

@@ -14,6 +14,15 @@ from app.models.novel import Novel
 from app.models.review_issue import ReviewIssue
 from app.models.research_source import ResearchSource
 from app.models.sample_analysis import SampleAnalysis
+from app.models.sample_collaboration import (
+    SampleAnnotation,
+    SampleAnnotationReport,
+    SampleAnnotationRevision,
+    SampleAnnotationVote,
+    SampleCollaborationEvent,
+    SampleTextSegment,
+    SampleUserReputation,
+)
 from app.models.sample_passage import SamplePassage
 from app.models.story_bible import StoryBible
 from app.models.story_event import StoryEvent

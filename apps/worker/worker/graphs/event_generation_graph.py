@@ -11,6 +11,7 @@ import sys
 import time
 from concurrent.futures import Future, ThreadPoolExecutor
 from pathlib import Path
+from threading import Lock
 from typing import Any, TypedDict
 from uuid import UUID
 
@@ -50,11 +51,21 @@ from app.services.chapter_pipeline import (
 from app.services.chapter_review_cycle import review_and_revise_chapter_once
 from app.services.event_revision_service import review_and_repair_story_event
 from app.services.graph_checkpoint import load_graph_checkpoint, save_graph_checkpoint
-from app.services.llm_client import LLMClient, build_llm_config, build_review_llm_config
+from app.services.llm_client import (
+    LLMClient,
+    LLMRequestCancelledError,
+    build_llm_config,
+    build_review_llm_config,
+)
 from app.services.pacing_plan import NARRATIVE_CLOSING_EVENT_TYPES
 from app.services.prompt_context import compact_story_bible
 from app.services.sample_rag import build_plot_design_reference_pack
-from app.services.task_events import emit_task_event
+from app.services.storytelling_craft import (
+    build_scene_execution_schema,
+    normalize_scene_execution,
+    scene_execution_is_complete,
+)
+from app.services.task_events import ModelThinkingPublisher, emit_task_event
 from app.services.tone_pacing_contract import resolve_event_chapter_count
 
 
@@ -84,6 +95,13 @@ class EventGenerationState(TypedDict, total=False):
     event_revision: dict[str, Any]
     plot_reference_pack: dict[str, Any]
     _resume_node: str
+
+
+class EventPlanningQualityError(RuntimeError):
+    """规划模型多次违反作品硬约束；不得降级成占位剧情继续生成。"""
+
+
+MAX_AUXILIARY_REPAIR_ROUNDS = 3
 
 
 def _set_task_progress(
@@ -119,11 +137,11 @@ def _set_task_progress(
 
 
 def _event_research_message(research_summary: dict[str, Any]) -> str:
-    """说明本次事件实际关联了多少条现实资料。"""
+    """说明本次事件实际关联了多少条情节、表达与现实资料。"""
     source_count = len(research_summary.get("source_ids", []))
     if research_summary.get("reason") == "not_needed":
-        return "本事件不需要额外现实资料"
-    return f"已关联 {source_count} 条现实资料"
+        return "未找到可用的情节与表达资料"
+    return f"已关联 {source_count} 条情节、表达与现实资料"
 
 
 def _clip_chapter_count(value: Any, allow_single_chapter: bool = False) -> int:
@@ -311,6 +329,89 @@ def _narrative_contract_from_input(
     }
 
 
+_AUXILIARY_TOPIC_GROUPS: dict[str, tuple[str, ...]] = {
+    "career_technology": (
+        "产品经理", "产品思维", "用户需求", "用户反馈", "swot", "算法", "模型",
+        "变量", "代码", "接口", "版本", "数据", "方案", "汇报", "职场", "求职",
+    ),
+    "housing_administration": (
+        "租房", "合租", "协议", "条款", "合同", "押金", "门禁", "钥匙", "开锁",
+        "物业", "备案", "登记", "核验", "清单", "文书", "手续", "规则确认",
+    ),
+}
+
+
+def _auxiliary_dominance_report(
+    chapter_plans: list[dict[str, Any]],
+    narrative_contract: dict[str, Any],
+) -> dict[str, Any]:
+    """用可解释的文本门禁拦住连续由职业术语或生活手续主导的计划。"""
+    primary_genre = str(narrative_contract.get("primary_genre") or "").lower()
+    policy = str(narrative_contract.get("supporting_element_policy") or "").lower()
+    policy_is_restrictive = any(
+        marker in policy
+        for marker in ("辅助", "不是作品主题", "不得连续", "不能连续", "不主导")
+    )
+    if not policy_is_restrictive:
+        return {"passed": True, "violations": [], "chapter_topics": {}}
+
+    chapter_topics: dict[int, list[str]] = {}
+    for offset, plan in enumerate(chapter_plans, start=1):
+        try:
+            chapter_index = int(plan.get("chapter_index") or offset)
+        except (TypeError, ValueError):
+            chapter_index = offset
+        # 只检查真正决定剧情走向的字段。secondary_element_role 与
+        # compressed_processes 本来就是“说明该元素仅作辅助/需要压缩”的字段，
+        # 把它们计入命中会造成“越强调不主导，越容易被判主导”的反向误判。
+        material = " ".join(
+            str(plan.get(key) or "")
+            for key in (
+                "title",
+                "function",
+                "plot_engine",
+                "core_event",
+                "state_change",
+                "dramatic_turn",
+                "reader_payoff",
+                "ending_hook",
+            )
+        ).lower()
+        topics: list[str] = []
+        for topic, markers in _AUXILIARY_TOPIC_GROUPS.items():
+            if topic == "career_technology" and any(
+                marker in primary_genre for marker in ("职场", "商战", "科技", "职业")
+            ):
+                continue
+            if topic == "housing_administration" and any(
+                marker in primary_genre for marker in ("房产", "租房", "地产")
+            ):
+                continue
+            # 同一词重复出现不等于它主导剧情；至少命中两个不同概念才进入疑点列表。
+            distinct_hits = {marker for marker in markers if marker in material}
+            if len(distinct_hits) >= 2:
+                topics.append(topic)
+        chapter_topics[chapter_index] = topics
+
+    violations: list[dict[str, Any]] = []
+    for topic in _AUXILIARY_TOPIC_GROUPS:
+        run: list[int] = []
+        for chapter_index in sorted(chapter_topics):
+            if topic in chapter_topics[chapter_index]:
+                run.append(chapter_index)
+                continue
+            if len(run) >= 2:
+                violations.append({"topic": topic, "chapter_indexes": run})
+            run = []
+        if len(run) >= 2:
+            violations.append({"topic": topic, "chapter_indexes": run})
+    return {
+        "passed": not violations,
+        "violations": violations,
+        "chapter_topics": chapter_topics,
+    }
+
+
 def _event_plan_quality_report(
     raw: dict[str, Any],
     narrative_contract: dict[str, Any],
@@ -350,6 +451,11 @@ def _event_plan_quality_report(
         and str(item.get("dramatic_turn") or "").strip()
         and str(item.get("reader_payoff") or "").strip()
     )
+    complete_scene_executions = sum(
+        1
+        for item in chapter_plans
+        if scene_execution_is_complete(item.get("scene_execution"))
+    )
     event_fields_complete = all(
         str(raw.get(key) or "").strip()
         for key in (
@@ -359,6 +465,30 @@ def _event_plan_quality_report(
             "reader_payoff",
         )
     )
+    auxiliary_dominance = _auxiliary_dominance_report(
+        chapter_plans,
+        narrative_contract,
+    )
+    comedy_required = any(
+        marker in (
+            str(narrative_contract.get("primary_genre") or "")
+            + str(narrative_contract.get("primary_reader_promise") or "")
+        )
+        for marker in ("喜剧", "搞笑", "幽默")
+    )
+    comedy_delivery_passed = (
+        not comedy_required
+        or all(
+            isinstance(item.get("comedy_beats"), list)
+            and len(item["comedy_beats"]) >= 4
+            for item in chapter_plans
+        )
+    )
+    first_plan = chapter_plans[0] if chapter_plans else {}
+    first_chapter_hook_passed = not first_plan or not (
+        int(first_plan.get("chapter_index") or 0) == 1
+        and str(first_plan.get("function") or "").strip() in {"铺垫", "背景", "介绍"}
+    )
     passed = (
         len(candidates) >= 4
         and complete_candidates >= 4
@@ -366,6 +496,10 @@ def _event_plan_quality_report(
         and event_fields_complete
         and bool(chapter_plans)
         and complete_chapters == len(chapter_plans)
+        and complete_scene_executions == len(chapter_plans)
+        and auxiliary_dominance["passed"]
+        and comedy_delivery_passed
+        and first_chapter_hook_passed
     )
     return {
         "status": "passed" if passed else "failed",
@@ -380,12 +514,441 @@ def _event_plan_quality_report(
         "unique_plot_engine_count": len(plot_engines),
         "chapter_count": len(chapter_plans),
         "complete_chapter_count": complete_chapters,
+        "complete_scene_execution_count": complete_scene_executions,
         "event_fields_complete": event_fields_complete,
+        "auxiliary_dominance": auxiliary_dominance,
+        "comedy_delivery_passed": comedy_delivery_passed,
+        "first_chapter_hook_passed": first_chapter_hook_passed,
         "rule": (
             "候选须使用至少3种剧情驱动力，并说明主类型承诺、升级和回报；"
-            "事件与每章须有明确转折和读者回报，辅助元素不得冒充主类型。"
+            "事件与每章须有明确转折和读者回报；辅助元素不得连续主导；"
+            "每章须有两轮以上的场景攻防、对白压力与可承接的章末余力；"
+            "喜剧作品每章至少规划4个因果型喜剧节拍；首章不得只是铺垫。"
         ),
     }
+
+
+def _quality_passes_without_auxiliary(report: dict[str, Any]) -> bool:
+    """判断除辅助元素疑点外的结构、类型与场景门禁是否全部通过。"""
+    chapter_count = int(report.get("chapter_count") or 0)
+    return bool(
+        int(report.get("candidate_count") or 0) >= 4
+        and int(report.get("complete_candidate_count") or 0) >= 4
+        and int(report.get("unique_plot_engine_count") or 0) >= 3
+        and report.get("event_fields_complete") is True
+        and chapter_count > 0
+        and int(report.get("complete_chapter_count") or 0) == chapter_count
+        and int(report.get("complete_scene_execution_count") or 0) == chapter_count
+        and report.get("comedy_delivery_passed") is True
+        and report.get("first_chapter_hook_passed") is True
+    )
+
+
+def _auxiliary_suspect_indexes(report: dict[str, Any]) -> list[int]:
+    indexes: set[int] = set()
+    auxiliary = report.get("auxiliary_dominance") or {}
+    for violation in auxiliary.get("violations") or []:
+        if not isinstance(violation, dict):
+            continue
+        for value in violation.get("chapter_indexes") or []:
+            try:
+                indexes.add(int(value))
+            except (TypeError, ValueError):
+                continue
+    return sorted(indexes)
+
+
+def _chapter_index(value: Any) -> int:
+    """宽容解析模型返回的章节编号，非法值统一视为 0。"""
+    try:
+        return int(value or 0)
+    except (TypeError, ValueError):
+        return 0
+
+
+def _build_auxiliary_semantic_review_prompt(
+    event_plan: dict[str, Any],
+    quality_report: dict[str, Any],
+    narrative_contract: dict[str, Any],
+) -> list[dict[str, str]]:
+    """让审校模型判断关键词疑点是否真的成为章节主要剧情驱动力。"""
+    suspect_indexes = set(_auxiliary_suspect_indexes(quality_report))
+    chapter_plans = [
+        item
+        for item in (event_plan.get("chapter_plans") or [])
+        if isinstance(item, dict)
+        and _chapter_index(item.get("chapter_index")) in suspect_indexes
+    ]
+    payload = {
+        "narrative_contract": narrative_contract,
+        "event": {
+            key: event_plan.get(key)
+            for key in (
+                "event_title",
+                "event_goal",
+                "core_conflict",
+                "genre_alignment",
+                "dramatic_escalation",
+                "major_reversal",
+                "reader_payoff",
+            )
+        },
+        "keyword_suspicions": (
+            (quality_report.get("auxiliary_dominance") or {}).get("violations") or []
+        ),
+        "suspect_chapter_plans": chapter_plans,
+        "expected_output": {
+            "dominant_chapter_indexes": ["真正由辅助元素主导的章节编号；没有则为空数组"],
+            "assessments": [
+                {
+                    "chapter_index": "章节编号",
+                    "dominant": "true|false",
+                    "primary_plot_driver": "本章真正推动局势变化的力量",
+                    "reason": "为什么属于主导或只是背景/工具",
+                }
+            ],
+        },
+    }
+    return [
+        {
+            "role": "system",
+            "content": (
+                "你是严格的剧情主导性审校器，只输出 JSON。关键词命中只是疑点，不是结论。"
+                "逐章判断：若删除职业、技术、租房手续或物业规则后，本章主要冲突、人物选择、"
+                "转折和读者回报仍然成立，则该元素只是背景或工具，dominant=false；"
+                "若主要篇幅和局势变化依赖办理、核验、条款讨论、职业方案或技术流程本身，"
+                "则 dominant=true。不得因为字段提到‘需要压缩流程’就判定主导，也不得为了放行而宽松判断。"
+            ),
+        },
+        {
+            "role": "user",
+            "content": json.dumps(payload, ensure_ascii=False, separators=(",", ":")),
+        },
+    ]
+
+
+def _semantic_auxiliary_targets(
+    semantic_review: dict[str, Any],
+    quality_report: dict[str, Any],
+) -> list[int]:
+    """把语义复核结论限制在关键词初筛范围内，并扩展到对应连续疑点组。"""
+    suspect_indexes = set(_auxiliary_suspect_indexes(quality_report))
+    dominant_indexes: set[int] = set()
+    for value in semantic_review.get("dominant_chapter_indexes") or []:
+        try:
+            chapter_index = int(value)
+        except (TypeError, ValueError):
+            continue
+        if chapter_index in suspect_indexes:
+            dominant_indexes.add(chapter_index)
+    if not dominant_indexes:
+        return []
+
+    expanded = set(dominant_indexes)
+    auxiliary = quality_report.get("auxiliary_dominance") or {}
+    for violation in auxiliary.get("violations") or []:
+        if not isinstance(violation, dict):
+            continue
+        group = {
+            int(value)
+            for value in (violation.get("chapter_indexes") or [])
+            if str(value).isdigit()
+        }
+        if group & dominant_indexes:
+            expanded.update(group)
+    return sorted(expanded & suspect_indexes)
+
+
+def _mark_auxiliary_semantically_passed(
+    quality_report: dict[str, Any],
+    semantic_review: dict[str, Any],
+) -> dict[str, Any]:
+    """记录语义复核通过，并重新计算完整质量门禁。"""
+    auxiliary = {
+        **(quality_report.get("auxiliary_dominance") or {}),
+        "passed": True,
+        "semantic_review": semantic_review,
+        "keyword_violations": (
+            (quality_report.get("auxiliary_dominance") or {}).get("violations") or []
+        ),
+        "violations": [],
+    }
+    updated = {**quality_report, "auxiliary_dominance": auxiliary}
+    updated["passed"] = _quality_passes_without_auxiliary(updated)
+    updated["status"] = "passed" if updated["passed"] else "failed"
+    return updated
+
+
+def _build_auxiliary_repair_prompt(
+    event_plan: dict[str, Any],
+    quality_report: dict[str, Any],
+    semantic_review: dict[str, Any],
+    target_indexes: list[int],
+    narrative_contract: dict[str, Any],
+    repair_round: int,
+) -> list[dict[str, str]]:
+    """只要求模型替换真正有问题的章节计划，禁止重写整个事件。"""
+    target_set = set(target_indexes)
+    all_plans = [
+        item for item in (event_plan.get("chapter_plans") or []) if isinstance(item, dict)
+    ]
+    payload = {
+        "repair_round": repair_round,
+        "narrative_contract": narrative_contract,
+        "event": {
+            key: event_plan.get(key)
+            for key in (
+                "event_title",
+                "event_goal",
+                "core_conflict",
+                "genre_alignment",
+                "dramatic_escalation",
+                "major_reversal",
+                "reader_payoff",
+            )
+        },
+        "semantic_review": semantic_review,
+        "violations": (quality_report.get("auxiliary_dominance") or {}).get("violations") or [],
+        "target_chapter_indexes": target_indexes,
+        "target_chapter_plans": [
+            item
+            for item in all_plans
+            if _chapter_index(item.get("chapter_index")) in target_set
+        ],
+        "continuity_context": [
+            {
+                "chapter_index": item.get("chapter_index"),
+                "core_event": item.get("core_event"),
+                "state_change": item.get("state_change"),
+                "dramatic_turn": item.get("dramatic_turn"),
+                "ending_hook": item.get("ending_hook"),
+            }
+            for item in all_plans
+        ],
+        "expected_output": {
+            "chapter_plan_replacements": [
+                "为每个 target_chapter_indexes 返回一份字段完整的章节计划对象"
+            ]
+        },
+    }
+    return [
+        {
+            "role": "system",
+            "content": (
+                "你是 NovelForge 剧情计划局部修复器，只输出 JSON。只替换指定章节，禁止重写事件总纲、"
+                "候选方向或其他章节。新章节必须保留前后状态连续性，但更换真正的 plot_engine："
+                "让人物目标冲突、误解、关系攻防、信息反转、限时选择或主动承担后果推动剧情。"
+                "租房、物业、手续、职业或技术只能一笔带过并作为压力/工具，不能成为主要讨论对象、"
+                "解决目标、对白中心或读者回报。每个替换章节仍须保留完整 scene_execution、"
+                "4—6个因果型喜剧节拍、明确 dramatic_turn、state_change、reader_payoff 和 ending_hook。"
+                "后续修复轮次必须换用不同于上一版的剧情驱动力，不能只替换措辞来规避关键词。"
+            ),
+        },
+        {
+            "role": "user",
+            "content": json.dumps(payload, ensure_ascii=False, separators=(",", ":")),
+        },
+    ]
+
+
+def _merge_chapter_plan_replacements(
+    event_plan: dict[str, Any],
+    replacements_payload: dict[str, Any],
+    target_indexes: list[int],
+) -> tuple[dict[str, Any], dict[str, Any]]:
+    """校验并合并局部章节替换；任何目标缺失时保持原计划不变。"""
+    target_set = set(target_indexes)
+    original_plans = {
+        _chapter_index(item.get("chapter_index")): item
+        for item in (event_plan.get("chapter_plans") or [])
+        if isinstance(item, dict)
+    }
+    replacements: dict[int, dict[str, Any]] = {}
+    invalid_indexes: list[int] = []
+    unchanged_plot_engine_indexes: list[int] = []
+    for item in replacements_payload.get("chapter_plan_replacements") or []:
+        if not isinstance(item, dict):
+            continue
+        try:
+            chapter_index = int(item.get("chapter_index") or 0)
+        except (TypeError, ValueError):
+            continue
+        if chapter_index not in target_set:
+            continue
+        old_plot_engine = str(
+            (original_plans.get(chapter_index) or {}).get("plot_engine") or ""
+        ).strip().casefold()
+        new_plot_engine = str(item.get("plot_engine") or "").strip().casefold()
+        if old_plot_engine and new_plot_engine == old_plot_engine:
+            unchanged_plot_engine_indexes.append(chapter_index)
+            continue
+        complete = bool(
+            str(item.get("core_event") or "").strip()
+            and str(item.get("plot_engine") or "").strip()
+            and str(item.get("state_change") or "").strip()
+            and str(item.get("dramatic_turn") or "").strip()
+            and str(item.get("reader_payoff") or "").strip()
+            and str(item.get("ending_hook") or "").strip()
+            and isinstance(item.get("comedy_beats"), list)
+            and len(item.get("comedy_beats") or []) >= 4
+            and scene_execution_is_complete(item.get("scene_execution"))
+        )
+        if not complete:
+            invalid_indexes.append(chapter_index)
+            continue
+        replacements[chapter_index] = item
+
+    missing_indexes = sorted(target_set - set(replacements))
+    validation = {
+        "target_indexes": sorted(target_set),
+        "replaced_indexes": sorted(replacements),
+        "missing_indexes": missing_indexes,
+        "invalid_indexes": sorted(set(invalid_indexes)),
+        "unchanged_plot_engine_indexes": sorted(set(unchanged_plot_engine_indexes)),
+        "passed": not missing_indexes,
+    }
+    if missing_indexes:
+        return event_plan, validation
+
+    merged_plans = []
+    for plan in event_plan.get("chapter_plans") or []:
+        if not isinstance(plan, dict):
+            continue
+        chapter_index = _chapter_index(plan.get("chapter_index"))
+        merged_plans.append(
+            {**plan, **replacements[chapter_index], "chapter_index": chapter_index}
+            if chapter_index in replacements
+            else plan
+        )
+    return {**event_plan, "chapter_plans": merged_plans}, validation
+
+
+def _build_scene_orchestration_prompt(
+    event_plan: dict[str, Any],
+    narrative_contract: dict[str, Any],
+) -> list[dict[str, str]]:
+    """把宏观章节目的地再编排成可直接写作的视角、对白与章际接力。"""
+    payload = {
+        "narrative_contract": narrative_contract,
+        "event": {
+            key: event_plan.get(key)
+            for key in (
+                "event_title",
+                "event_goal",
+                "core_conflict",
+                "genre_alignment",
+                "dramatic_escalation",
+                "major_reversal",
+                "reader_payoff",
+            )
+        },
+        "chapter_plans": event_plan.get("chapter_plans") or [],
+        "expected_output": {
+            "chapter_scene_directions": [
+                {
+                    "chapter_index": "章节编号",
+                    "scene_execution": build_scene_execution_schema(),
+                    "interaction_contexts": [
+                        {
+                            "characters": ["核心对手戏人物"],
+                            "relationship": "当前真实关系与距离",
+                            "emotion": "双方不同的即时情绪",
+                            "speech_goal": "表面语言目的与不能直说的真实目的",
+                        }
+                    ],
+                    "character_beats": ["用动作或选择显露的人物变化"],
+                    "comedy_beats": [
+                        "喜剧作品填写4—6个：现实铺垫→人物逻辑偏移→对方反应→局面后果/回调"
+                    ],
+                    "compressed_processes": ["不值得展开、只交代结果的说明或流程"],
+                }
+            ]
+        },
+    }
+    return [
+        {
+            "role": "system",
+            "content": (
+                "你是 NovelForge 章节场面编排 Agent，只输出 JSON。宏观事件、章节顺序、core_event、"
+                "state_change、dramatic_turn、reader_payoff 和 ending_hook 已经确定，禁止改写。"
+                "你的任务是让每章像连载小说现场而不是提纲：一章围绕一个正在发生的问题和一组核心对手戏；"
+                "说明只在人物眼下需要时给最少信息。逐章补全 scene_execution，尤其是"
+                "‘可观察细节→带私心的误读→即时冲动→可见反应’和"
+                "‘话/动作刺激→按性格回避或抓错重点→对方接招→局面变化’。"
+                "对白只规划功能，不得预写可粘贴台词。关系变化用称呼、距离、视线、步速、物品、等待或"
+                "欲言又止等微动作显露，不由旁白宣布。喜剧优先人物自利解释、字面误读、一本正经补救、"
+                "回旋镖和身份反转；每个笑点必须有对方反应与后果，热梗不计数。"
+                "上一章 ending_residual_force.next_chapter_first_beat 必须成为下一章 entry_pressure 的直接承接；"
+                "禁止章末总结后下一章另起炉灶。"
+            ),
+        },
+        {
+            "role": "user",
+            "content": json.dumps(payload, ensure_ascii=False, separators=(",", ":")),
+        },
+    ]
+
+
+def _merge_scene_orchestration(
+    event_plan: dict[str, Any],
+    payload: dict[str, Any],
+) -> tuple[dict[str, Any], dict[str, Any]]:
+    """只合并场面执行字段；宏观剧情字段始终以原规划为准。"""
+    plans = [
+        item
+        for item in (event_plan.get("chapter_plans") or [])
+        if isinstance(item, dict)
+    ]
+    target_indexes = {
+        _chapter_index(item.get("chapter_index"))
+        for item in plans
+        if _chapter_index(item.get("chapter_index")) > 0
+    }
+    directions: dict[int, dict[str, Any]] = {}
+    invalid_indexes: list[int] = []
+    for item in payload.get("chapter_scene_directions") or []:
+        if not isinstance(item, dict):
+            continue
+        chapter_index = _chapter_index(item.get("chapter_index"))
+        if chapter_index not in target_indexes:
+            continue
+        if not scene_execution_is_complete(item.get("scene_execution")):
+            invalid_indexes.append(chapter_index)
+            continue
+        directions[chapter_index] = item
+
+    merged_plans: list[dict[str, Any]] = []
+    complete_indexes: list[int] = []
+    for plan in plans:
+        chapter_index = _chapter_index(plan.get("chapter_index"))
+        direction = directions.get(chapter_index)
+        merged = dict(plan)
+        if direction:
+            merged["scene_execution"] = normalize_scene_execution(
+                direction.get("scene_execution")
+            )
+            for key in (
+                "interaction_contexts",
+                "character_beats",
+                "comedy_beats",
+                "compressed_processes",
+            ):
+                if isinstance(direction.get(key), list):
+                    merged[key] = direction[key]
+        if scene_execution_is_complete(merged.get("scene_execution")):
+            complete_indexes.append(chapter_index)
+        merged_plans.append(merged)
+
+    missing_indexes = sorted(target_indexes - set(complete_indexes))
+    validation = {
+        "target_indexes": sorted(target_indexes),
+        "refined_indexes": sorted(directions),
+        "retained_indexes": sorted(target_indexes - set(directions)),
+        "invalid_indexes": sorted(set(invalid_indexes)),
+        "missing_indexes": missing_indexes,
+        "passed": not missing_indexes,
+    }
+    return {**event_plan, "chapter_plans": merged_plans}, validation
 
 
 def _compact_plot_experience(value: Any) -> dict[str, Any]:
@@ -576,6 +1139,7 @@ def _build_event_plan_prompt(novel: Novel, task_input: dict, chapter_count: int,
                     "state_change": "本章结束时相较开头发生的明确变化",
                     "dramatic_turn": "本章局势升级、判断改变或关系换轨的具体节点",
                     "reader_payoff": "本章给读者的即时回报，不能只是流程完成",
+                    "scene_execution": build_scene_execution_schema(),
                     "participants": ["本章实际出场并参与核心互动的人物"],
                     "interaction_contexts": [
                         {
@@ -586,7 +1150,7 @@ def _build_event_plan_prompt(novel: Novel, task_input: dict, chapter_count: int,
                         }
                     ],
                     "character_beats": ["人物关系或心理推进"],
-                    "comedy_beats": ["喜剧作品填写2—3个由人物行动触发的喜剧节点"],
+                    "comedy_beats": ["喜剧作品填写4—6个分散在章内、由人物行动触发且带回应或后果的喜剧节点；网络热梗不计入数量"],
                     "compressed_processes": ["应一句带过、不得展开成流程的手续或日常事项"],
                     "foreshadowing_actions": ["伏笔埋设/推进/回收"],
                     "ending_hook": "章末钩子",
@@ -608,10 +1172,17 @@ def _build_event_plan_prompt(novel: Novel, task_input: dict, chapter_count: int,
                     "事件和每章都必须有可感知的 dramatic_turn 与 reader_payoff；会议结束、手续完成、方案通过、修炼结束或调查结束本身都不是回报，除非它造成局势反转、目标进展或人物状态变化。",
                     "plot_design_reference_pack 只迁移“触发—阻力—选择—转折—代价”机制；禁止拼接窗口或复制人物、关系、事件链、专名、道具、原句和结局。",
                     "每章 core_event 写清触发、阻力、决定、后果；story_time/elapsed_time 必须从上一章真实结尾连续推进，不能引用尚未生成的章节作为前史。",
+                    "大纲只规定本章目的地，不等于正文讲解顺序。一章优先围绕一个正在发生的问题和一组核心对手戏推进，背景只在当前动作需要时露出。每章 scene_execution 必须写出开场压力、双方即时目标、至少两轮策略—反制—局部变化，以及能被下一章第一拍接住的章末余力。",
+                    "每章必须规划 pov_reaction_chain：可观察细节→带人物私心的误读→即时冲动→可见反应；不得由旁白直接宣布标准情绪。还必须规划 dialogue_reaction_chain：刺激→回避/抓错重点→对方接招→局面变化。只描述功能，不预写可粘贴台词。",
+                    "对白规划必须有隐藏意图和反应链。人物可以回避、装没听懂、答非所问、嘴硬或说半句，但对方必须用动作、追问、沉默或反击接住；至少一轮交流改变信息、立场、关系或行动，禁止标准问答和轮流说明。",
                     "每章必须产生新的 state_change；不得把一次租房、采购、登记、面试或规则协商拆成多章逐项确认。",
+                    "职业和技术能力可以在必要处解决问题，但职业术语不得成为人物的固定口癖、感情比喻或连续笑点；若作品契约将其定义为辅助元素，连续两章由同一职业/技术/手续话题主导即为不合格。",
+                    "若主类型包含喜剧，每章规划4—6个分散的因果型喜剧节拍：优先用人物自利解释、抓错重点、过度字面理解、一本正经补救、前文回旋镖或身份反转，并产生回应、升级或关系后果；网络热梗不算喜剧节拍，也不能代替原创笑点。",
+                    "喜剧可按需使用网络语义的‘抽象’：答非所问、错位联想、一本正经跑偏、因果倒置、概念偷换或过度字面理解。每次只做一次清楚的逻辑偏移，必须来自人物性格、误判、自尊或即时困境，并由他人反应和现实后果接住；禁止随机胡言乱语或全员同频发疯。",
+                    "第1章禁止把功能写成单纯‘铺垫/背景介绍’：前10%发生具体扰动，前25%出现一次计划受阻或判断反转，背景只随行动露出；结尾钩子必须立刻改变下一步行动，喜剧/关系作品应尽早让核心对手戏人物以出场、声音或直接行动进入。",
                     "配角必须带着自己的目标主动介入；单个普通事件通常只启用1—2名核心配角，禁止把配角写成随叫随到的工具人或集体助攻团。",
                     "遵守 story_contract 中的人物与世界事实；科技、职业、制度和生活细节符合年代。重大关系推进须有现实动机和安全缓冲。",
-                    "ending_hook 必须是具体信息、未完动作、危险、选择或关系变化，形成追读问题；禁止空泛总结或抒情意象。",
+                    "ending_hook 必须是具体信息、未完动作、半句话、危险、选择或关系变化，形成追读问题；ending_residual_force.next_chapter_first_beat 必须先兑现这一拍，再允许换场或补背景，禁止章末总结后下一章另起炉灶。",
                     "服从 production_pacing：final_arc/ending 不开大型支线，优先闭合主线、人物弧光和伏笔；finale/epilogue 可无 next_event_hook，否则只能留番外/续作钩子。",
                 ]
             ),
@@ -668,6 +1239,7 @@ def _normalize_event_plan(
                 "state_change": str(source.get("state_change") or "").strip(),
                 "dramatic_turn": str(source.get("dramatic_turn") or "").strip(),
                 "reader_payoff": str(source.get("reader_payoff") or "").strip(),
+                "scene_execution": normalize_scene_execution(source.get("scene_execution")),
                 "participants": [
                     str(item).strip()
                     for item in (source.get("participants") or [])[:8]
@@ -809,6 +1381,51 @@ def _build_simulated_event_plan(novel: Novel, task_input: dict, chapter_count: i
                 "state_change": "人物目标、关系或局势至少一项发生可验证变化",
                 "dramatic_turn": "新行动造成意外后果，人物必须重新判断局势",
                 "reader_payoff": primary_promise,
+                "scene_execution": normalize_scene_execution(
+                    {
+                        "entry_pressure": "上一章未完动作或当前麻烦已经逼到眼前",
+                        "protagonist_want": "主角想立刻解决眼前阻力并保住自己的退路",
+                        "opposing_want": "对手戏人物要维护自己的目标，不会无条件配合主角",
+                        "tactic_turns": [
+                            {
+                                "actor": "主角",
+                                "tactic": "先试探并采取一个可见行动",
+                                "counterforce": "对方识破或现实条件顶回来",
+                                "local_change": "原计划失效，信息与风险发生变化",
+                            },
+                            {
+                                "actor": "对手戏人物",
+                                "tactic": "利用新局面提出条件或主动行动",
+                                "counterforce": "主角作出不能撤回的选择",
+                                "local_change": "关系、决定或下一步行动被改写",
+                            },
+                        ],
+                        "dialogue_pressure": {
+                            "surface_topic": "双方围绕眼前问题交涉",
+                            "hidden_stakes": "双方都在保护不愿直接承认的真实利益",
+                            "decisive_exchange": "一次试探被回避后，反问迫使人物改变下一步行动",
+                        },
+                        "pov_reaction_chain": {
+                            "observable_detail": "主角先注意到对方一个与口头态度不一致的动作",
+                            "biased_interpretation": "主角按自己的愿望或戒备误读这个动作",
+                            "immediate_impulse": "主角因此想回避、试探或逞强",
+                            "visible_response": "主角的停顿、动作或改口让对方能够接招",
+                        },
+                        "dialogue_reaction_chain": {
+                            "trigger": "对方用一句话或动作逼近当前问题",
+                            "evasion_or_misread": "主角按性格抓错重点或故意回避",
+                            "countermove": "对方追问、拆穿或顺势利用主角的回避",
+                            "local_consequence": "双方关系、信息或下一步行动随之改变",
+                        },
+                        "voice_contrast": [],
+                        "absurd_comedy_mode": {"enabled": False},
+                        "ending_residual_force": {
+                            "last_change": "一个行动造成无法忽略的新后果",
+                            "reader_question": "人物将如何处理这个已经发生的变化",
+                            "next_chapter_first_beat": "从对该后果的即时回应开始",
+                        },
+                    }
+                ),
                 "participants": [brief.get("protagonist") or "主角"],
                 "interaction_contexts": [],
                 "ending_hook": (
@@ -1018,17 +1635,46 @@ def run_event_generation_graph(db: Session, task: GenerationTask, novel: Novel) 
         thread_name_prefix="chapter-review-pipeline",
     )
     review_futures: dict[int, Future] = {}
+    pause_poll_lock = Lock()
+    pause_poll_state = {"checked_at": 0.0, "requested": False}
 
     def is_pause_requested() -> bool:
         """读取总控暂停标记；单次模型请求无法中断，但其余步骤应立即停止。"""
         auto_run_id = task_input.get("auto_run_id")
         if not auto_run_id:
             return False
-        try:
-            auto_run = db.get(AutoNovelRun, UUID(str(auto_run_id)))
-        except (TypeError, ValueError):
+        if pause_poll_state["requested"]:
+            return True
+        now = time.monotonic()
+        if now - pause_poll_state["checked_at"] < 0.75:
             return False
-        return bool(auto_run and (auto_run.status == "paused" or (auto_run.payload or {}).get("pause_requested")))
+        with pause_poll_lock:
+            if pause_poll_state["requested"]:
+                return True
+            now = time.monotonic()
+            if now - pause_poll_state["checked_at"] < 0.75:
+                return False
+            pause_poll_state["checked_at"] = now
+            try:
+                resolved_id = UUID(str(auto_run_id))
+            except (TypeError, ValueError):
+                return False
+            with SessionLocal() as pause_db:
+                auto_run = pause_db.get(AutoNovelRun, resolved_id)
+                requested = bool(
+                    auto_run
+                    and (
+                        auto_run.status == "paused"
+                        or (auto_run.payload or {}).get("pause_requested")
+                    )
+                )
+            pause_poll_state["requested"] = requested
+            return requested
+
+    if llm_config is not None:
+        llm_config.cancel_check = is_pause_requested
+    if review_llm_config is not None:
+        review_llm_config.cancel_check = is_pause_requested
 
     def run_parallel_chapter_review(
         chapter_id: str,
@@ -1250,10 +1896,28 @@ def run_event_generation_graph(db: Session, task: GenerationTask, novel: Novel) 
                     start_chapter_index,
                 )
                 planner_client = LLMClient(planning_llm_config)
+                narrative_contract = _narrative_contract_from_input(
+                    novel,
+                    current_planning_input,
+                )
                 last_planner_activity_notice_at = 0.0
+                planner_round = 1
+                auxiliary_repair_records: list[dict[str, Any]] = []
+                scene_orchestration_records: list[dict[str, Any]] = []
+                planner_thinking = ModelThinkingPublisher(
+                    task,
+                    source_step_key="event_plan",
+                    model_role="reviewer",
+                    model=planning_llm_config.model,
+                    title="审校模型 · 剧情事件规划",
+                )
+                planner_thinking.start()
 
                 def report_planner_activity(activity: dict[str, Any]) -> None:
-                    nonlocal last_planner_activity_notice_at
+                    nonlocal last_planner_activity_notice_at, planner_round
+                    planner_thinking.append_activity(
+                        {**activity, "generation_attempt": planner_round}
+                    )
                     now = time.monotonic()
                     if now - last_planner_activity_notice_at < 10:
                         return
@@ -1274,41 +1938,319 @@ def run_event_generation_graph(db: Session, task: GenerationTask, novel: Novel) 
                         payload={"stream_activity": activity},
                     )
 
-                _, parsed = planner_client.complete_json(
-                    planning_messages,
-                    on_activity=report_planner_activity,
-                )
-                diversity_report = _candidate_diversity_report(parsed)
-                quality_report = _event_plan_quality_report(
-                    parsed,
-                    _narrative_contract_from_input(novel, current_planning_input),
-                )
-                if not diversity_report["passed"] or not quality_report["passed"]:
+                def refine_scene_orchestration(
+                    current_plan: dict[str, Any],
+                    *,
+                    reason: str,
+                ) -> dict[str, Any]:
+                    nonlocal planner_round
+                    planner_round += 1
+                    planner_thinking.start(attempt=planner_round)
+                    emit_task_event(
+                        db,
+                        task,
+                        event_type="event_plan_scene_orchestration",
+                        step_key="event_plan",
+                        status="running",
+                        title="正在编排章节对手戏与语言节奏",
+                        message="正在补全视角误读、对白反应链、人物微动作与章际接力",
+                        progress=15,
+                        payload={"phase": "scene_orchestration", "reason": reason},
+                    )
+                    try:
+                        _, scene_payload = planner_client.complete_json(
+                            _build_scene_orchestration_prompt(
+                                current_plan,
+                                narrative_contract,
+                            ),
+                            required_keys=("chapter_scene_directions",),
+                            required_non_empty_keys=("chapter_scene_directions",),
+                            on_activity=report_planner_activity,
+                        )
+                    except LLMRequestCancelledError:
+                        raise
+                    except Exception as exc:
+                        scene_orchestration_records.append(
+                            {
+                                "status": "failed",
+                                "reason": reason,
+                                "error": str(exc),
+                            }
+                        )
+                        return current_plan
+                    refined, validation = _merge_scene_orchestration(
+                        current_plan,
+                        scene_payload,
+                    )
+                    scene_orchestration_records.append(
+                        {
+                            "status": "completed" if validation["passed"] else "partial",
+                            "reason": reason,
+                            "validation": validation,
+                        }
+                    )
+                    return refined
+
+                try:
                     _, parsed = planner_client.complete_json(
-                        [
-                            *planning_messages,
-                            {
-                                "role": "assistant",
-                                "content": json.dumps(
-                                    parsed,
-                                    ensure_ascii=False,
-                                ),
-                            },
-                            {
-                                "role": "user",
-                                "content": (
-                                    "上一次结果没有同时通过剧情方向多样性和本书类型质量门禁。"
-                                    "请按 narrative_contract 重新规划：至少4个候选、至少3种 plot_engine；"
-                                    "每个候选补全 primary_promise_served、dramatic_escalation、reader_payoff；"
-                                    "事件补全 genre_alignment、major_reversal 和 reader_payoff；"
-                                    "每章补全 plot_engine、dramatic_turn、reader_payoff。"
-                                    "职业、技能、身份和设定名词若不是本书核心类型，只能作为能力、压力、代价或翻盘工具，"
-                                    "不能连续主导剧情。不能只是更换地点、道具或流程。重新输出完整 JSON。"
-                                ),
-                            },
-                        ],
+                        planning_messages,
                         on_activity=report_planner_activity,
                     )
+                    parsed = refine_scene_orchestration(
+                        parsed,
+                        reason="initial_plan",
+                    )
+                    diversity_report = _candidate_diversity_report(parsed)
+                    quality_report = _event_plan_quality_report(
+                        parsed,
+                        narrative_contract,
+                    )
+                    # 结构缺失、喜剧交付不足等全局问题允许完整重规划一次；
+                    # 单纯的辅助元素疑点不得触发整份重写。
+                    if (
+                        not diversity_report["passed"]
+                        or not _quality_passes_without_auxiliary(quality_report)
+                    ):
+                        planner_round += 1
+                        planner_thinking.start(attempt=planner_round)
+                        _, parsed = planner_client.complete_json(
+                            [
+                                *planning_messages,
+                                {
+                                    "role": "assistant",
+                                    "content": json.dumps(
+                                        parsed,
+                                        ensure_ascii=False,
+                                    ),
+                                },
+                                {
+                                    "role": "user",
+                                    "content": (
+                                        "上一次结果没有同时通过剧情方向多样性和本书类型质量门禁。"
+                                        "请按 narrative_contract 重新规划：至少4个候选、至少3种 plot_engine；"
+                                        "每个候选补全 primary_promise_served、dramatic_escalation、reader_payoff；"
+                                        "事件补全 genre_alignment、major_reversal 和 reader_payoff；"
+                                        "每章补全 plot_engine、dramatic_turn、reader_payoff，以及完整 scene_execution："
+                                        "开场压力、双方即时目标、至少两轮 actor/tactic/counterforce/local_change、"
+                                        "dialogue_pressure、pov_reaction_chain、dialogue_reaction_chain 和 ending_residual_force 都必须填写。"
+                                        "职业、技能、身份和设定名词若不是本书核心类型，只能作为能力、压力、代价或翻盘工具，"
+                                        "不能连续主导剧情，不能成为固定口癖、感情比喻或主要笑点。"
+                                        "喜剧作品每章必须有4—6个不依赖网络热梗的因果型喜剧节拍。"
+                                        "可使用答非所问、错位联想、一本正经跑偏等抽象机制，但必须锚定人物并由现场反应和后果接住。"
+                                        "第1章不得只是铺垫，必须用即时扰动、受阻/反转和强行动钩子承担追读功能。"
+                                        "不能只是更换地点、道具或流程。门禁报告："
+                                        + json.dumps(
+                                            {
+                                                "diversity": diversity_report,
+                                                "quality": quality_report,
+                                            },
+                                            ensure_ascii=False,
+                                        )
+                                        + "。重新输出完整 JSON。"
+                                    ),
+                                },
+                            ],
+                            on_activity=report_planner_activity,
+                        )
+                        parsed = refine_scene_orchestration(
+                            parsed,
+                            reason="global_replan",
+                        )
+                        diversity_report = _candidate_diversity_report(parsed)
+                        quality_report = _event_plan_quality_report(
+                            parsed,
+                            narrative_contract,
+                        )
+                        if (
+                            not diversity_report["passed"]
+                            or not _quality_passes_without_auxiliary(quality_report)
+                        ):
+                            raise EventPlanningQualityError(
+                                "剧情事件规划的结构或类型交付连续两次不完整，"
+                                "系统未生成不合格章节。"
+                            )
+
+                    repair_round = 0
+                    while not (
+                        quality_report.get("auxiliary_dominance") or {}
+                    ).get("passed"):
+                        suspect_indexes = _auxiliary_suspect_indexes(quality_report)
+                        emit_task_event(
+                            db,
+                            task,
+                            event_type="event_plan_repair",
+                            step_key="event_plan",
+                            status="running",
+                            title="正在语义复核辅助元素是否主导剧情",
+                            message=(
+                                "正在检查第 "
+                                + "、".join(str(index) for index in suspect_indexes)
+                                + " 章；关键词命中不会直接判定失败"
+                            ),
+                            progress=15,
+                            payload={
+                                "phase": "semantic_review",
+                                "suspect_chapter_indexes": suspect_indexes,
+                                "keyword_violations": (
+                                    quality_report.get("auxiliary_dominance") or {}
+                                ).get("violations")
+                                or [],
+                            },
+                        )
+                        try:
+                            planner_round += 1
+                            planner_thinking.start(attempt=planner_round)
+                            _, semantic_review = LLMClient(
+                                planning_llm_config
+                            ).complete_json(
+                                _build_auxiliary_semantic_review_prompt(
+                                    parsed,
+                                    quality_report,
+                                    narrative_contract,
+                                ),
+                                required_keys=(
+                                    "dominant_chapter_indexes",
+                                    "assessments",
+                                ),
+                                on_activity=report_planner_activity,
+                            )
+                            target_indexes = _semantic_auxiliary_targets(
+                                semantic_review,
+                                quality_report,
+                            )
+                        except LLMRequestCancelledError:
+                            raise
+                        except Exception as exc:
+                            # 语义复核失败时采取保守策略：不放行，自动修复全部疑点章。
+                            target_indexes = suspect_indexes
+                            semantic_review = {
+                                "status": "failed",
+                                "error": str(exc),
+                                "dominant_chapter_indexes": target_indexes,
+                                "assessments": [],
+                                "fallback": "repair_all_suspects",
+                            }
+
+                        if not target_indexes:
+                            quality_report = _mark_auxiliary_semantically_passed(
+                                quality_report,
+                                semantic_review,
+                            )
+                            emit_task_event(
+                                db,
+                                task,
+                                event_type="event_plan_repair",
+                                step_key="event_plan",
+                                status="completed",
+                                title="辅助元素语义复核通过",
+                                message="疑点章节中的流程或职业元素仅作为背景/工具，不主导剧情",
+                                progress=15,
+                                payload={
+                                    "phase": "semantic_review",
+                                    "semantic_review": semantic_review,
+                                },
+                            )
+                            break
+
+                        if repair_round >= MAX_AUXILIARY_REPAIR_ROUNDS:
+                            break
+                        repair_round += 1
+                        planner_round += 1
+                        planner_thinking.start(attempt=planner_round)
+                        emit_task_event(
+                            db,
+                            task,
+                            event_type="event_plan_repair",
+                            step_key="event_plan",
+                            status="running",
+                            title="正在自动修复问题章节",
+                            message=(
+                                "正在自动修复问题章节："
+                                f"第 {repair_round}/{MAX_AUXILIARY_REPAIR_ROUNDS} 轮；"
+                                "仅处理第 "
+                                + "、".join(str(index) for index in target_indexes)
+                                + " 章，其他合格计划保持不变"
+                            ),
+                            progress=15,
+                            payload={
+                                "phase": "targeted_repair",
+                                "repair_round": repair_round,
+                                "target_chapter_indexes": target_indexes,
+                                "semantic_review": semantic_review,
+                            },
+                        )
+                        _, replacements_payload = planner_client.complete_json(
+                            _build_auxiliary_repair_prompt(
+                                parsed,
+                                quality_report,
+                                semantic_review,
+                                target_indexes,
+                                narrative_contract,
+                                repair_round,
+                            ),
+                            on_activity=report_planner_activity,
+                            required_keys=("chapter_plan_replacements",),
+                            required_non_empty_keys=("chapter_plan_replacements",),
+                        )
+                        repaired_plan, merge_validation = (
+                            _merge_chapter_plan_replacements(
+                                parsed,
+                                replacements_payload,
+                                target_indexes,
+                            )
+                        )
+                        auxiliary_repair_records.append(
+                            {
+                                "repair_round": repair_round,
+                                "target_chapter_indexes": target_indexes,
+                                "semantic_review": semantic_review,
+                                "merge_validation": merge_validation,
+                            }
+                        )
+                        if not merge_validation["passed"]:
+                            continue
+                        parsed = repaired_plan
+                        diversity_report = _candidate_diversity_report(parsed)
+                        quality_report = _event_plan_quality_report(
+                            parsed,
+                            narrative_contract,
+                        )
+
+                    if (
+                        not diversity_report["passed"]
+                        or not quality_report["passed"]
+                    ):
+                        remaining_indexes = _auxiliary_suspect_indexes(quality_report)
+                        emit_task_event(
+                            db,
+                            task,
+                            event_type="event_plan_repair",
+                            step_key="event_plan",
+                            status="failed",
+                            title="问题章节自动重构未通过验收",
+                            message=(
+                                "仍未通过的章节："
+                                + "、".join(str(index) for index in remaining_indexes)
+                            ),
+                            progress=15,
+                            payload={
+                                "phase": "repair_failed",
+                                "remaining_chapter_indexes": remaining_indexes,
+                                "diversity": diversity_report,
+                                "quality": quality_report,
+                                "repair_records": auxiliary_repair_records,
+                            },
+                        )
+                        raise EventPlanningQualityError(
+                            "剧情事件规划已自动局部重构 "
+                            f"{repair_round} 轮，但问题章节仍未通过质量验收；"
+                            "系统未继续生成不合格正文。"
+                        )
+                except Exception:
+                    planner_thinking.finish(status="failed")
+                    raise
+                else:
+                    planner_thinking.finish()
                 event_plan = _normalize_event_plan(
                     parsed,
                     novel=novel,
@@ -1316,6 +2258,15 @@ def run_event_generation_graph(db: Session, task: GenerationTask, novel: Novel) 
                     start_index=start_chapter_index,
                     task_input=current_planning_input,
                 )
+                # 归一化会重新运行关键词初筛；保留已经完成的语义复核与自动修复结论。
+                event_plan["planning_diversity"] = diversity_report
+                event_plan["planning_quality"] = {
+                    **quality_report,
+                    "automatic_repair_records": auxiliary_repair_records,
+                    "scene_orchestration_records": scene_orchestration_records,
+                }
+            except EventPlanningQualityError:
+                raise
             except Exception as exc:
                 event_plan = _build_simulated_event_plan(
                     novel,
@@ -1357,13 +2308,14 @@ def run_event_generation_graph(db: Session, task: GenerationTask, novel: Novel) 
                 "plot_rag": event_plan.get("plot_rag", {}),
             },
         )
-        _set_task_progress(db, task, 18, "正在检查现实资料", step_key="event_research")
+        _set_task_progress(db, task, 18, "正在检索情节写法与搞笑话术", step_key="event_research")
         research_summary = collect_event_research(
             db=db,
             novel=novel,
             owner=owner,
             event_plan=event_plan,
             llm_config=planning_llm_config,
+            search_llm_config=llm_config,
         )
         story_event.payload = {**(story_event.payload or {}), "event_research": research_summary}
         db.commit()
@@ -1373,7 +2325,7 @@ def run_event_generation_graph(db: Session, task: GenerationTask, novel: Novel) 
             event_type="step",
             step_key="event_research",
             status="completed",
-            title="现实资料检查完成",
+            title="情节与表达资料检索完成",
             message=_event_research_message(research_summary),
             progress=19,
             payload=research_summary,
@@ -1474,34 +2426,38 @@ def run_event_generation_graph(db: Session, task: GenerationTask, novel: Novel) 
             "production_pacing": task_input.get("production_pacing") or {},
             "research_source_ids": state.get("research_source_ids", []),
         }
-        pipeline = run_chapter_pipeline(
-            db=db,
-            task=task,
-            novel=novel,
-            request=ChapterPipelineRequest(
-                target_chapter_index=chapter_plan["chapter_index"],
-                task_input=pipeline_input,
-                simulated_builder=lambda current_context: _build_simulated_chapter(
-                    current_context,
-                    state["event_plan"],
-                    chapter_plan,
+        try:
+            pipeline = run_chapter_pipeline(
+                db=db,
+                task=task,
+                novel=novel,
+                request=ChapterPipelineRequest(
+                    target_chapter_index=chapter_plan["chapter_index"],
+                    task_input=pipeline_input,
+                    simulated_builder=lambda current_context: _build_simulated_chapter(
+                        current_context,
+                        state["event_plan"],
+                        chapter_plan,
+                    ),
+                    llm_config=llm_config,
+                    review_llm_config=review_llm_config,
+                    context=context,
+                    story_event_id=UUID(state["story_event_id"]),
+                    progress=progress,
+                    force_title=True,
+                    memory_expected_total=len(chapter_plans),
+                    strict_quality_gate=bool(
+                        task_input.get(
+                            "strict_quality_gate",
+                            review_llm_config is not None,
+                        )
+                    ),
+                    defer_review=True,
                 ),
-                llm_config=llm_config,
-                review_llm_config=review_llm_config,
-                context=context,
-                story_event_id=UUID(state["story_event_id"]),
-                progress=progress,
-                force_title=True,
-                memory_expected_total=len(chapter_plans),
-                strict_quality_gate=bool(
-                    task_input.get(
-                        "strict_quality_gate",
-                        review_llm_config is not None,
-                    )
-                ),
-                defer_review=True,
-            ),
-        )
+            )
+        except LLMRequestCancelledError:
+            db.rollback()
+            return {**state, "pause_requested": True}
         chapter = pipeline.chapter
         generation_mode = pipeline.generation_mode
         llm_model = pipeline.llm_model

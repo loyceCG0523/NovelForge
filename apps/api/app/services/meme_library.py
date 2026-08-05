@@ -10,7 +10,8 @@ from pathlib import Path
 from typing import Any
 from uuid import UUID
 
-from openpyxl import load_workbook
+from openpyxl import Workbook, load_workbook
+from openpyxl.styles import Alignment, Font, PatternFill
 from sqlalchemy import or_, select
 from sqlalchemy.orm import Session
 
@@ -20,10 +21,46 @@ from app.models.user import User
 from app.services.embedding_client import EmbeddingClient, build_embedding_config
 
 
-MEME_LIBRARY_HEADERS = ("热梗", "含义", "出处事件", "适用场景", "流行时间", "来源链接")
+MEME_LIBRARY_HEADERS = ("热梗", "含义", "适用场景")
 MAX_MEME_IMPORT_BYTES = 8 * 1024 * 1024
 MAX_MEME_IMPORT_ROWS = 2000
 MEME_EMBEDDING_SCHEMA = "meme-fit-v2"
+
+
+def build_meme_library_workbook(entries: list[MemeEntry]) -> bytes:
+    """将热梗内容导出为与现有导入字段一致的 XLSX。"""
+    workbook = Workbook()
+    sheet = workbook.active
+    sheet.title = "热梗知识库"
+    sheet.append(MEME_LIBRARY_HEADERS)
+
+    header_fill = PatternFill(fill_type="solid", fgColor="DCEFEA")
+    for cell in sheet[1]:
+        cell.font = Font(bold=True)
+        cell.fill = header_fill
+        cell.alignment = Alignment(horizontal="center", vertical="center")
+
+    for item in entries:
+        sheet.append(
+            (
+                item.phrase,
+                item.meaning,
+                item.suitable_scenes,
+            )
+        )
+
+    sheet.freeze_panes = "A2"
+    sheet.auto_filter.ref = sheet.dimensions
+    widths = (24, 42, 52)
+    for index, width in enumerate(widths, start=1):
+        sheet.column_dimensions[sheet.cell(row=1, column=index).column_letter].width = width
+    for row in sheet.iter_rows(min_row=2):
+        for cell in row:
+            cell.alignment = Alignment(vertical="top", wrap_text=True)
+
+    output = io.BytesIO()
+    workbook.save(output)
+    return output.getvalue()
 
 
 def meme_embedding_model_key(model: str) -> str:
@@ -33,13 +70,6 @@ def meme_embedding_model_key(model: str) -> str:
 
 def normalize_meme_phrase(value: Any) -> str:
     return re.sub(r"\s+", "", str(value or "").strip()).casefold()[:120]
-
-
-def parse_popularity_years(value: Any) -> tuple[int | None, int | None]:
-    years = [int(item) for item in re.findall(r"(?<!\d)(20\d{2})(?!\d)", str(value or ""))]
-    if not years:
-        return None, None
-    return min(years), max(years)
 
 
 def build_meme_retrieval_text(entry: dict[str, Any]) -> str:
@@ -59,29 +89,10 @@ def build_meme_content_hash(entry: dict[str, Any]) -> str:
         for key in (
             "phrase",
             "meaning",
-            "origin_event",
             "suitable_scenes",
-            "popularity_period",
-            "source_urls",
         )
     )
     return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
-
-
-def _clean_source_urls(value: Any) -> list[str]:
-    urls = []
-    raw_values = value if isinstance(value, (list, tuple)) else str(value or "").split("|")
-    for raw in raw_values:
-        url = raw.strip()
-        if not url:
-            continue
-        if not re.match(r"^https?://", url, flags=re.IGNORECASE):
-            raise ValueError(f"来源链接必须以 http:// 或 https:// 开头：{url}")
-        if url not in urls:
-            urls.append(url)
-    if not urls:
-        raise ValueError("来源链接不能为空")
-    return urls[:5]
 
 
 def normalize_manual_meme_entry(payload: dict[str, Any]) -> dict[str, Any]:
@@ -90,10 +101,7 @@ def normalize_manual_meme_entry(payload: dict[str, Any]) -> dict[str, Any]:
         {
             "热梗": payload.get("phrase"),
             "含义": payload.get("meaning"),
-            "出处事件": payload.get("origin_event"),
             "适用场景": payload.get("suitable_scenes"),
-            "流行时间": payload.get("popularity_period"),
-            "来源链接": payload.get("source_urls"),
         },
         1,
     )
@@ -103,13 +111,8 @@ def normalize_manual_meme_entry(payload: dict[str, Any]) -> dict[str, Any]:
 
 
 def _normalize_import_row(row: dict[str, Any], row_number: int) -> dict[str, Any]:
-    source_urls_value = row.get("来源链接")
     values = {
-        header: (
-            "|".join(str(item).strip() for item in source_urls_value)
-            if header == "来源链接" and isinstance(source_urls_value, (list, tuple))
-            else str(row.get(header) or "").strip()
-        )
+        header: str(row.get(header) or "").strip()
         for header in MEME_LIBRARY_HEADERS
     }
     missing = [header for header, value in values.items() if not value]
@@ -117,17 +120,11 @@ def _normalize_import_row(row: dict[str, Any], row_number: int) -> dict[str, Any
         raise ValueError(f"第 {row_number} 行缺少：{'、'.join(missing)}")
     if len(values["热梗"]) > 120:
         raise ValueError(f"第 {row_number} 行热梗超过 120 字")
-    start_year, end_year = parse_popularity_years(values["流行时间"])
     return {
         "phrase": values["热梗"],
         "normalized_phrase": normalize_meme_phrase(values["热梗"]),
         "meaning": values["含义"][:1000],
-        "origin_event": values["出处事件"][:1600],
         "suitable_scenes": values["适用场景"][:1200],
-        "popularity_period": values["流行时间"][:80],
-        "popularity_year_start": start_year,
-        "popularity_year_end": end_year,
-        "source_urls": _clean_source_urls(source_urls_value),
     }
 
 

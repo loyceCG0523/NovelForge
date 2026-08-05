@@ -29,11 +29,14 @@ from app.services.chapter_word_guard import (
     generate_chapter_with_word_guard,
     get_context_chapter_word_range,
 )
-from app.services.llm_client import LLMClient, LLMConfig
+from app.services.llm_client import LLMClient, LLMConfig, LLMRequestCancelledError
 from app.services.paragraph_formatter import format_chapter_paragraphs
 from app.services.prompt_builder import build_chapter_prompt
 from app.services.reference_overlap_guard import build_reference_overlap_report
-from app.services.sample_rag import build_chapter_reference_pack
+from app.services.sample_rag import (
+    ChapterReferenceRequirementError,
+    build_chapter_reference_pack,
+)
 from app.services.meme_rag import (
     build_chapter_meme_pack,
     build_final_meme_usage,
@@ -44,7 +47,11 @@ from app.services.meme_usage_enforcer import (
     ensure_minimum_meme_usage,
     repair_repeated_meme_usage,
 )
-from app.services.task_events import ChapterPreviewPublisher, emit_task_event
+from app.services.task_events import (
+    ChapterPreviewPublisher,
+    ModelThinkingPublisher,
+    emit_task_event,
+)
 
 
 SimulatedChapterBuilder = Callable[[dict[str, Any]], tuple[str, str, str]]
@@ -142,6 +149,7 @@ def generate_chapter_content(
     llm_config: LLMConfig | None,
     simulated_builder: SimulatedChapterBuilder,
     preview_publisher: ChapterPreviewPublisher | None = None,
+    thinking_publisher: ModelThinkingPublisher | None = None,
 ) -> tuple[str, str, str, str, str, dict[str, Any], dict[str, Any]]:
     """所有章节入口共享的正文生成和字数护栏。"""
     word_range = get_context_chapter_word_range(context)
@@ -167,6 +175,13 @@ def generate_chapter_content(
         "max": length_target["prompt_target_max"],
         "unit": "字",
     }
+
+    def reset_stream(attempt: int) -> None:
+        if preview_publisher is not None:
+            preview_publisher.reset(attempt)
+        if thinking_publisher is not None:
+            thinking_publisher.start(attempt=attempt)
+
     llm_result, word_guard = generate_chapter_with_word_guard(
         llm_client=LLMClient(llm_config),
         prompt_messages=build_chapter_prompt(
@@ -181,7 +196,18 @@ def generate_chapter_content(
             else None
         ),
         stream_reset_callback=(
-            preview_publisher.reset if preview_publisher is not None else None
+            reset_stream
+            if preview_publisher is not None or thinking_publisher is not None
+            else None
+        ),
+        activity_callback=(
+            (
+                lambda activity, attempt: thinking_publisher.append_activity(
+                    {**activity, "generation_attempt": attempt}
+                )
+            )
+            if thinking_publisher is not None
+            else None
         ),
     )
     word_guard = {
@@ -277,15 +303,16 @@ def run_chapter_pipeline(
             novel=novel,
             context=context,
         )
+    except LLMRequestCancelledError:
+        raise
+    except ChapterReferenceRequirementError:
+        db.rollback()
+        raise
     except Exception as exc:
         db.rollback()
-        reference_pack = {
-            "status": "degraded",
-            "reason": f"表达检索失败，已降级为仅使用样本风格报告：{exc}",
-            "query": "",
-            "references": [],
-            "total_chars": 0,
-        }
+        raise ChapterReferenceRequirementError(
+            f"本章样本参考检索失败，已停止正文生成：{exc}"
+        ) from exc
     context = {**context, "expression_reference_pack": reference_pack}
     try:
         meme_reference_pack = build_chapter_meme_pack(
@@ -293,7 +320,18 @@ def run_chapter_pipeline(
             novel=novel,
             context=context,
             story_event_id=request.story_event_id,
+            cancel_check=(
+                request.review_llm_config.cancel_check
+                if request.review_llm_config is not None
+                else (
+                    request.llm_config.cancel_check
+                    if request.llm_config is not None
+                    else None
+                )
+            ),
         )
+    except LLMRequestCancelledError:
+        raise
     except Exception as exc:
         db.rollback()
         meme_reference_pack = {
@@ -303,14 +341,41 @@ def run_chapter_pipeline(
         }
     context = {**context, "meme_reference_pack": meme_reference_pack}
     preview = ChapterPreviewPublisher(db, task, request.target_chapter_index)
-    title, summary, content, generation_mode, llm_model, word_guard, raw_progress = (
-        generate_chapter_content(
-            context=context,
-            llm_config=request.llm_config,
-            simulated_builder=request.simulated_builder,
-            preview_publisher=preview,
+    thinking = (
+        ModelThinkingPublisher(
+            task,
+            source_step_key=f"chapter_{request.target_chapter_index}_draft",
+            model_role="writer",
+            model=request.llm_config.model,
+            title=f"正文模型 · 第 {request.target_chapter_index} 章初稿",
+            chapter_index=request.target_chapter_index,
         )
+        if request.llm_config is not None
+        else None
     )
+    if thinking is not None:
+        thinking.start()
+    try:
+        title, summary, content, generation_mode, llm_model, word_guard, raw_progress = (
+            generate_chapter_content(
+                context=context,
+                llm_config=request.llm_config,
+                simulated_builder=request.simulated_builder,
+                preview_publisher=preview,
+                thinking_publisher=thinking,
+            )
+        )
+    except LLMRequestCancelledError:
+        if thinking is not None:
+            thinking.finish(status="paused")
+        raise
+    except Exception:
+        if thinking is not None:
+            thinking.finish(status="failed")
+        raise
+    else:
+        if thinking is not None:
+            thinking.finish()
     chapter_progress = normalize_chapter_progress(
         raw_progress,
         summary=summary,
@@ -488,10 +553,8 @@ def run_chapter_pipeline(
             }
             db.commit()
             db.refresh(chapter)
-        meme_requirement_failed = bool(
-            (meme_reference_pack.get("references") or [])
-            and meme_enforcement["usage"].get("adopted_count", 0) < 1
-        )
+        # 热梗是可选表达资源。零使用不再判失败，准确和自然优先于数量。
+        meme_requirement_failed = False
         candidate_phrases = [
             str(item.get("phrase") or "").strip()
             for item in (meme_reference_pack.get("references") or [])

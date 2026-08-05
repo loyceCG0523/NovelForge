@@ -4,8 +4,9 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import AppShell from "@/components/AppShell";
 import EmptyState from "@/components/EmptyState";
-import { apiDownload, apiFetch, buildTimestampedDownloadFilename } from "@/lib/api";
+import { apiDownload, apiFetch, buildTimestampedDownloadFilename, isTaskInFlight } from "@/lib/api";
 import { parseMarkdownJsonArray } from "@/lib/markdownImport.mjs";
+import { useLiveRefresh } from "@/lib/useLiveRefresh";
 
 const defaultBrief = {
   work_type: "",
@@ -421,29 +422,28 @@ export default function ProjectsPage() {
     setBriefDocMessage("");
     setStoryBibleTask(null);
     if (selectedProject?.id) {
-      loadStoryBible(selectedProject.id).catch((err) => setStoryBibleError(err.message));
+      Promise.all([
+        loadStoryBible(selectedProject.id),
+        loadActiveStoryBibleTask(selectedProject.id)
+      ]).catch((err) => setStoryBibleError(err.message));
     } else {
       setStoryBible(null);
     }
   }, [selectedProject?.id]);
 
-  useEffect(() => {
-    if (!storyBibleTask || !selectedProjectId) return undefined;
-    if (!["queued", "running"].includes(storyBibleTask.status)) return undefined;
-
-    const timer = setInterval(async () => {
-      try {
-        const task = await apiFetch(`/api/novels/${selectedProjectId}/tasks/${storyBibleTask.id}`);
-        setStoryBibleTask(task);
-        if (task.status === "completed") {
-          await loadStoryBible(selectedProjectId);
-        }
-      } catch (err) {
-        setStoryBibleError(err.message);
+  useLiveRefresh({
+    enabled: Boolean(selectedProjectId && storyBibleTask?.id && isTaskInFlight(storyBibleTask?.status)),
+    intervalMs: 1800,
+    refresh: async () => {
+      const task = await apiFetch(`/api/novels/${selectedProjectId}/tasks/${storyBibleTask.id}`);
+      setStoryBibleTask(task);
+      setStoryBibleError("");
+      if (["completed", "waiting"].includes(task.status)) {
+        await loadStoryBible(selectedProjectId);
       }
-    }, 1800);
-    return () => clearInterval(timer);
-  }, [storyBibleTask, selectedProjectId]);
+    },
+    onError: (err) => setStoryBibleError(err.message)
+  });
 
   async function loadProjects() {
     try {
@@ -540,6 +540,19 @@ export default function ProjectsPage() {
     setStoryBibleError("");
     const data = await apiFetch(`/api/novels/${projectId}/story-bible`);
     setStoryBible(data);
+  }
+
+  async function loadActiveStoryBibleTask(projectId) {
+    const [runningTasks, queuedTasks] = await Promise.all([
+      apiFetch(`/api/novels/${projectId}/tasks?status_filter=running`),
+      apiFetch(`/api/novels/${projectId}/tasks?status_filter=queued`)
+    ]);
+    const task = [...runningTasks, ...queuedTasks].find(
+      (item) => item.task_type === "build_story_bible"
+    );
+    setStoryBibleTask((current) => (
+      task || (current && isTaskInFlight(current.status) ? current : null)
+    ));
   }
 
   async function generateStoryBible(projectId = selectedProjectId, source = "projects_page") {
@@ -714,7 +727,6 @@ export default function ProjectsPage() {
   return (
     <AppShell
       title="作品管理"
-      subtitle="管理多部作品、起始需求文档和作品圣经"
       actions={(
         <div className="project-top-actions">
           <div className="project-picker" ref={projectPickerRef}>
@@ -828,7 +840,6 @@ export default function ProjectsPage() {
             <div className="panel-header">
               <div>
                 <div className="panel-title">创作设定状态</div>
-                <div className="panel-subtitle">系统会基于起始需求文档自动维护内部创作设定。</div>
               </div>
               <div className="inline-actions">
                 <button className="secondary-button" disabled={!selectedProjectId} onClick={() => generateStoryBible()}>
@@ -883,7 +894,6 @@ export default function ProjectsPage() {
             <div className="panel-header bare">
               <div>
                 <div className="panel-title" id="create-project-title">新建作品</div>
-                <div className="panel-subtitle">填写初始需求后，系统会自动生成作品圣经。</div>
               </div>
               <div className="inline-actions">
                 <input
@@ -1091,12 +1101,31 @@ function BriefForm({ form, onChange, sampleLibrary = [] }) {
         {sampleLibrary.length === 0 ? (
           <div className="empty-inline">
             <h2>暂无可用样本</h2>
-            <p>先到“样本分析”上传并完成分析，之后就可以在这里选择复用。</p>
+            <p>先到“样本协作”上传并完成分析，之后就可以在这里选择私人样本；可信公共标注会自动参与检索。</p>
           </div>
         ) : (
           <div className="sample-reference-grid">
             {sampleLibrary.map((sample) => {
               const selected = selectedSampleIds.includes(sample.id);
+              const indexStats = sample.annotation_index || {};
+              const indexedCount = Number(indexStats.indexed_count || 0);
+              const pendingIndexCount = Number(indexStats.pending_index_count || 0);
+              const indexBadge = (() => {
+                switch (indexStats.status) {
+                  case "ready":
+                    return { className: "purple", label: `${indexedCount} 条标注可检索`, title: "这些可信人工标注已经建立向量，可在章节生成前被召回。" };
+                  case "partial":
+                    return { className: "yellow", label: `${indexedCount} 条可检索 · ${pendingIndexCount} 条待索引`, title: "已有标注可用于创作，另有可信标注尚未完成向量索引。" };
+                  case "pending_index":
+                    return { className: "yellow", label: `${pendingIndexCount} 条标注待索引`, title: "标注已经可信，但尚未生成可供检索的向量。" };
+                  case "pending_review":
+                    return { className: "yellow", label: `${Number(indexStats.pending_review_count || 0)} 条标注待审核`, title: "公共标注通过社区可信审核后才会建立索引。" };
+                  case "no_trusted_annotations":
+                    return { className: "red", label: "暂无可信标注", title: "现有标注未达到可信条件，暂时不会参与创作。" };
+                  default:
+                    return { className: "yellow", label: "待标注", title: "请在样本协作页选择优秀片段并添加人工标注。" };
+                }
+              })();
               return (
                 <button
                   className={`sample-reference-card ${selected ? "active" : ""}`}
@@ -1111,7 +1140,7 @@ function BriefForm({ form, onChange, sampleLibrary = [] }) {
                   <div className="memory-tags">
                     {sample.source_word_count ? <span className="tag">{Number(sample.source_word_count).toLocaleString()} 字</span> : null}
                     {sample.chunk_count ? <span className="tag green">分片 {sample.chunk_count}</span> : null}
-                    {sample.report?.rag_index?.status === "completed" ? <span className="tag purple">RAG 已就绪</span> : <span className="tag yellow">索引待检查</span>}
+                    <span className={`tag ${indexBadge.className}`} title={indexBadge.title}>{indexBadge.label}</span>
                   </div>
                 </button>
               );

@@ -98,6 +98,7 @@ def test_my_model_api(
             base_url=payload.base_url,
             model=payload.model,
             api_key=payload.api_key,
+            context_window_tokens=payload.context_window_tokens,
         )
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc

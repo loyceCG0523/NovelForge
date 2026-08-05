@@ -6,16 +6,49 @@ import json
 from typing import Any
 from uuid import UUID
 
-from sqlalchemy import desc, func, select
+from sqlalchemy import and_, desc, false, func, or_, select
 from sqlalchemy.orm import Session
 
 from app.models.chapter import Chapter
 from app.models.foreshadowing import Foreshadowing
 from app.models.novel import Novel
 from app.models.sample_passage import SamplePassage
+from app.models.sample_analysis import SampleAnalysis
+from app.models.sample_collaboration import SampleAnnotation
 from app.models.user import User
 from app.services.embedding_client import EmbeddingClient, build_embedding_config
 from app.services.story_bible_builder import get_sample_style_reference_context
+
+
+MIN_CHAPTER_REFERENCE_COUNT = 1
+
+
+class ChapterReferenceRequirementError(RuntimeError):
+    """章节没有拿到最低数量的可信样本参考。"""
+
+
+def require_minimum_chapter_references(
+    reference_pack: dict[str, Any],
+    minimum: int = MIN_CHAPTER_REFERENCE_COUNT,
+) -> dict[str, Any]:
+    """把“每章至少一条参考”变成生成前硬门槛。"""
+    required = max(1, int(minimum or 1))
+    references = [
+        item
+        for item in (reference_pack.get("references") or [])
+        if isinstance(item, dict) and str(item.get("excerpt") or "").strip()
+    ]
+    if len(references) < required:
+        reason = str(reference_pack.get("reason") or "暂无可用的可信协同标注").strip()
+        raise ChapterReferenceRequirementError(
+            f"本章至少需要 {required} 条可信样本参考，实际获得 {len(references)} 条；{reason}"
+        )
+    return {
+        **reference_pack,
+        "references": references,
+        "minimum_required": required,
+        "requirement_satisfied": True,
+    }
 
 
 def _compact_json(value: Any, max_chars: int = 1000) -> str:
@@ -48,6 +81,15 @@ def build_expression_query(novel: Novel, context: dict[str, Any]) -> str:
     ]
     language_need = {
         "character_relationship_or_change": plan.get("character_beats") or [],
+        "pov_reaction_chain": (
+            (plan.get("scene_execution") or {}).get("pov_reaction_chain") or {}
+        ),
+        "dialogue_reaction_chain": (
+            (plan.get("scene_execution") or {}).get("dialogue_reaction_chain") or {}
+        ),
+        "chapter_handoff": (
+            (plan.get("scene_execution") or {}).get("ending_residual_force") or {}
+        ),
         "characters_at_previous_ending": ending_state.get("characters") or {},
         "unfinished_interactions": ending_state.get("open_actions") or [],
         "recent_relationship_facts": memories,
@@ -57,7 +99,11 @@ def build_expression_query(novel: Novel, context: dict[str, Any]) -> str:
     return (
         "检索优秀中文小说经验库中可迁移的生活化话术与表达技巧。重点匹配人物关系、"
         "权力差、熟悉程度、隐瞒或试探意图；优先称呼变化、答非所问、停顿、打断、"
-        "口头习惯、共享常识、琐碎动作和没有说破的潜台词。不要按剧情事件关键词匹配。"
+        "口头习惯、共享常识、琐碎动作和没有说破的潜台词。还要优先匹配：章首承接、"
+        "可观察细节→人物化误读→可见反应、对白刺激→回避/抓错重点→反击、"
+        "人物自利逻辑笑点与回旋镖、关系微动作、章末未完一拍。不要按剧情事件关键词匹配。"
+        "优先检索高分亮点原句：身份自抬后的字面降格、顺逻辑反杀、一本正经跑偏、"
+        "规则生活化吐槽、自恋式内心独白、谐音错词自我加冕和围观者短促补刀。"
         f"\n当前人物互动条件：{_compact_json(language_need, 1500)}"
     )[:2200]
 
@@ -146,7 +192,7 @@ def _empty_pack(status: str, reason: str, channel: str) -> dict[str, Any]:
     }
 
 
-def _retrieve_reference_pack(
+def _legacy_retrieve_reference_pack(
     db: Session,
     *,
     novel: Novel,
@@ -236,9 +282,18 @@ def _retrieve_reference_pack(
             and passage_type == "expression_experience"
             else 0
         )
+        experience = (entry["passage"].metadata_payload or {}).get("experience") or {}
+        highlight_bonus = (
+            0.02
+            if channel == "language"
+            and experience.get("original_excerpt")
+            and float(entry["passage"].quality_score or 0) >= 0.88
+            else 0
+        )
         entry["score"] += (
             float(entry["passage"].quality_score or 0) * 0.015
             + type_bonus
+            + highlight_bonus
         )
 
     ranked = sorted(merged.values(), key=lambda item: item["score"], reverse=True)
@@ -260,7 +315,10 @@ def _retrieve_reference_pack(
             continue
         if sample_counts.get(sample_id, 0) >= (2 if channel == "plot" else 4):
             continue
-        excerpt = (passage.content or "").strip()[:max_excerpt_chars]
+        raw_highlight = str(experience.get("original_excerpt") or "").strip()
+        excerpt = (
+            raw_highlight if channel == "language" and raw_highlight else (passage.content or "").strip()
+        )[:max_excerpt_chars]
         if not excerpt or total_chars + len(excerpt) > max_chars:
             continue
         selected.append(
@@ -298,6 +356,171 @@ def _retrieve_reference_pack(
     }
 
 
+def _retrieve_reference_pack(
+    db: Session,
+    *,
+    novel: Novel,
+    preferences: dict,
+    query_text: str,
+    channel: str,
+    limit: int,
+    max_chars: int,
+    max_excerpt_chars: int,
+) -> dict[str, Any]:
+    """只检索可信人工标注；私人样本需被作品选择，公共样本可共享召回。"""
+    config = build_embedding_config(preferences)
+    if config is None:
+        return _empty_pack("unavailable", "用户未开启 Embedding，或配置不完整", channel)
+    if not query_text:
+        return _empty_pack("skipped", "当前故事状态不足，无法检索", channel)
+    sample_ids = _selected_sample_ids(db, novel)
+    own_filter = (
+        and_(
+            SampleAnalysis.owner_id == novel.owner_id,
+            SampleAnalysis.id.in_(sample_ids),
+            SampleAnnotation.status == "trusted_private",
+        )
+        if sample_ids
+        else false()
+    )
+    visibility_filter = or_(
+        own_filter,
+        and_(
+            SampleAnalysis.visibility == "public",
+            SampleAnalysis.publication_status == "published",
+            SampleAnnotation.status == "trusted",
+        ),
+    )
+    base_filters = [
+        visibility_filter,
+        SampleAnnotation.embedding_model == config.model,
+        SampleAnnotation.embedding.is_not(None),
+    ]
+    instruct = (
+        "Retrieve trusted plot, hook, pacing and foreshadowing annotations from Chinese fiction."
+        if channel == "plot"
+        else "Retrieve trusted dialogue, humor, characterization and prose annotations from Chinese fiction."
+    )
+    query_vector = EmbeddingClient(config).embed(
+        [query_text], text_type="query", instruct=instruct
+    )[0]
+    distance = SampleAnnotation.embedding.cosine_distance(query_vector)
+    vector_rows = db.execute(
+        select(SampleAnnotation, SampleAnalysis, distance.label("distance"))
+        .join(SampleAnalysis, SampleAnalysis.id == SampleAnnotation.sample_analysis_id)
+        .where(*base_filters)
+        .order_by(distance)
+        .limit(100)
+    ).all()
+    lexical_score = func.similarity(SampleAnnotation.quote_text, query_text[:700])
+    lexical_rows = db.execute(
+        select(SampleAnnotation, SampleAnalysis, lexical_score.label("lexical_score"))
+        .join(SampleAnalysis, SampleAnalysis.id == SampleAnnotation.sample_analysis_id)
+        .where(*base_filters)
+        .order_by(desc(lexical_score))
+        .limit(40)
+    ).all()
+
+    merged: dict[str, dict[str, Any]] = {}
+    for rank, (annotation, analysis, vector_distance) in enumerate(vector_rows, start=1):
+        merged[str(annotation.id)] = {
+            "annotation": annotation,
+            "analysis": analysis,
+            "score": _rrf(rank),
+            "vector_distance": float(vector_distance or 0),
+            "lexical_score": 0.0,
+        }
+    for rank, (annotation, analysis, lexical_value) in enumerate(lexical_rows, start=1):
+        entry = merged.setdefault(
+            str(annotation.id),
+            {
+                "annotation": annotation,
+                "analysis": analysis,
+                "score": 0.0,
+                "vector_distance": 1.0,
+                "lexical_score": 0.0,
+            },
+        )
+        entry["score"] += _rrf(rank)
+        entry["lexical_score"] = float(lexical_value or 0)
+    for entry in merged.values():
+        entry["score"] += float(entry["annotation"].trust_score or 0) * 0.03
+
+    plot_categories = {"foreshadowing", "hook", "pacing"}
+    selected = []
+    total_chars = 0
+    category_counts: dict[str, int] = {}
+    sample_counts: dict[str, int] = {}
+    for entry in sorted(merged.values(), key=lambda item: item["score"], reverse=True):
+        annotation = entry["annotation"]
+        analysis = entry["analysis"]
+        categories = [str(item) for item in (annotation.categories or [])]
+        matches_channel = (
+            bool(plot_categories.intersection(categories))
+            if channel == "plot"
+            else bool(set(categories).difference(plot_categories))
+        )
+        if not matches_channel:
+            continue
+        primary_category = categories[0] if categories else "dialogue"
+        sample_id = str(analysis.id)
+        if category_counts.get(primary_category, 0) >= 3:
+            continue
+        if sample_counts.get(sample_id, 0) >= 4:
+            continue
+        excerpt = str(annotation.quote_text or "").strip()[:max_excerpt_chars]
+        if not excerpt or total_chars + len(excerpt) > max_chars:
+            continue
+        allow_verbatim = analysis.reuse_policy == "excerpt_reuse"
+        selected.append(
+            {
+                "annotation_id": str(annotation.id),
+                "sample_analysis_id": sample_id,
+                "sample_title": analysis.sample_title,
+                "passage_type": "trusted_annotation",
+                "experience_category": primary_category,
+                "categories": categories,
+                "excerpt": excerpt,
+                "technique": annotation.note,
+                "mechanism": {
+                    "categories": categories,
+                    "community_note": annotation.note,
+                    "reuse_policy": analysis.reuse_policy,
+                    "allow_verbatim": allow_verbatim,
+                    "instruction": (
+                        "允许在适配人物与场景时直接复用短表达"
+                        if allow_verbatim
+                        else "只学习表达机制，禁止复用原句"
+                    ),
+                },
+                "experience": {
+                    "original_excerpt": excerpt,
+                    "category": primary_category,
+                    "community_note": annotation.note,
+                    "allow_verbatim": allow_verbatim,
+                },
+                "quality_score": annotation.trust_score,
+                "retrieval_score": round(entry["score"], 6),
+            }
+        )
+        total_chars += len(excerpt)
+        category_counts[primary_category] = category_counts.get(primary_category, 0) + 1
+        sample_counts[sample_id] = sample_counts.get(sample_id, 0) + 1
+        if len(selected) >= max(1, limit):
+            break
+    return {
+        "status": "completed" if selected else "empty",
+        "reason": "" if selected else f"暂无可用的可信{channel}协同标注",
+        "channel": channel,
+        "query": query_text,
+        "references": selected,
+        "total_chars": total_chars,
+        "embedding_model": config.model,
+        "sample_count": len(sample_counts),
+        "index_strategy": "trusted_collaborative_annotations",
+    }
+
+
 def build_chapter_reference_pack(
     db: Session,
     *,
@@ -308,16 +531,39 @@ def build_chapter_reference_pack(
 ) -> dict[str, Any]:
     """正文生成前只检索结构化的生活化表达经验。"""
     owner = db.get(User, novel.owner_id)
-    return _retrieve_reference_pack(
+    preferences = owner.preferences if owner else {}
+    query_text = build_expression_query(novel, context)
+    reference_pack = _retrieve_reference_pack(
         db,
         novel=novel,
-        preferences=owner.preferences if owner else {},
-        query_text=build_expression_query(novel, context),
+        preferences=preferences,
+        query_text=query_text,
         channel="language",
         limit=limit,
         max_chars=max_chars,
         max_excerpt_chars=520,
     )
+    if not (reference_pack.get("references") or []):
+        # 若表达类标注暂时为空，自动从剧情/钩子类可信标注中补一条，
+        # 保证每章仍有真实样本依据，而不是静默回退成无参考生成。
+        fallback_pack = _retrieve_reference_pack(
+            db,
+            novel=novel,
+            preferences=preferences,
+            query_text=query_text,
+            channel="plot",
+            limit=MIN_CHAPTER_REFERENCE_COUNT,
+            max_chars=min(max_chars, 1200),
+            max_excerpt_chars=1200,
+        )
+        if fallback_pack.get("references"):
+            reference_pack = {
+                **fallback_pack,
+                "channel": "language",
+                "fallback_channel": "plot",
+                "reason": "表达类标注为空，已自动补取剧情/钩子类可信标注",
+            }
+    return require_minimum_chapter_references(reference_pack)
 
 
 def build_plot_design_reference_pack(

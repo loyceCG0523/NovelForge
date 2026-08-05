@@ -6,7 +6,8 @@ import { useRouter, useSearchParams } from "next/navigation";
 import AppShell from "@/components/AppShell";
 import EmptyState from "@/components/EmptyState";
 import ReviewIssuePanel from "@/components/ReviewIssuePanel";
-import { apiFetch } from "@/lib/api";
+import { apiFetch, isTaskInFlight, isTaskSettled } from "@/lib/api";
+import { useLiveRefresh } from "@/lib/useLiveRefresh";
 
 function statusText(status) {
   return {
@@ -116,45 +117,52 @@ function StoryEventsContent() {
         ending_hook: plan.ending_hook || ""
       }))
     });
-  }, [eventDetail?.id]);
+  }, [eventDetail]);
 
   useEffect(() => {
-    if (!selectedNovelId || !selectedEventId || !trackingTaskId) return undefined;
-
-    let stopped = false;
-    async function pollTask() {
-      try {
-        const task = await apiFetch(`/api/novels/${selectedNovelId}/tasks/${trackingTaskId}`);
-        await loadEventDetail(selectedNovelId, selectedEventId);
-        if (stopped) return;
-        if (task.status === "completed") {
-          setMessage("剧情事件任务已完成，事件详情已刷新");
-          setTrackingTaskId("");
-          setBusyPlanId("");
-          await loadEvents(selectedNovelId);
-        } else if (task.status === "failed") {
-          setError(`剧情事件任务失败：${task.error_message || "请查看 Worker 日志"}`);
-          setTrackingTaskId("");
-          setBusyPlanId("");
-        } else {
-          setMessage(`${task.result_payload?.graph_status || "剧情事件任务"}：${task.progress || 0}%`);
-        }
-      } catch (err) {
-        if (!stopped) {
-          setError(err.message);
-          setTrackingTaskId("");
-          setBusyPlanId("");
-        }
-      }
+    if (
+      !trackingTaskId
+      && eventDetail?.task_id
+      && isTaskInFlight(eventDetail.task_status)
+    ) {
+      setTrackingTaskId(eventDetail.task_id);
     }
+  }, [eventDetail?.task_id, eventDetail?.task_status, trackingTaskId]);
 
-    pollTask();
-    const timer = window.setInterval(pollTask, 2500);
-    return () => {
-      stopped = true;
-      window.clearInterval(timer);
-    };
-  }, [selectedNovelId, selectedEventId, trackingTaskId]);
+  useLiveRefresh({
+    enabled: Boolean(selectedNovelId && selectedEventId && trackingTaskId),
+    intervalMs: 2500,
+    refresh: async () => {
+      const task = await apiFetch(`/api/novels/${selectedNovelId}/tasks/${trackingTaskId}`);
+      if (isTaskSettled(task.status)) {
+        await loadEvents(selectedNovelId);
+        await loadEventDetail(selectedNovelId, selectedEventId);
+      } else {
+        await loadEventDetail(selectedNovelId, selectedEventId);
+      }
+      setError("");
+      if (task.status === "completed") {
+        setMessage("剧情事件任务已完成，事件列表和详情已刷新");
+        setTrackingTaskId("");
+        setBusyPlanId("");
+      } else if (task.status === "waiting") {
+        setMessage(task.result_payload?.graph_status || "剧情事件已进入待处理状态，详情已刷新。");
+        setTrackingTaskId("");
+        setBusyPlanId("");
+      } else if (task.status === "cancelled") {
+        setMessage("剧情事件任务已取消，当前详情已刷新。");
+        setTrackingTaskId("");
+        setBusyPlanId("");
+      } else if (task.status === "failed") {
+        setError(`剧情事件任务失败：${task.error_message || "请查看 Worker 日志"}`);
+        setTrackingTaskId("");
+        setBusyPlanId("");
+      } else {
+        setMessage(`${task.result_payload?.graph_status || "剧情事件任务"}：${task.progress || 0}%`);
+      }
+    },
+    onError: (err) => setError(err.message)
+  });
 
   async function rerunPlan(plan) {
     setMessage("");
@@ -257,7 +265,6 @@ function StoryEventsContent() {
   return (
     <AppShell
       title="剧情事件"
-      subtitle="查看闭环大事件、章节计划、质量建议和局部重跑"
       actions={
         <>
           <select className="secondary-button" value={selectedNovelId} onChange={(event) => setSelectedNovelId(event.target.value)}>
@@ -328,7 +335,7 @@ function StoryEventsContent() {
                     </div>
                   </div>
                   {eventDetail.status === "planned" ? (
-                    <div className="inline-actions" style={{ padding: "0 24px 18px" }}>
+                    <div className="inline-actions event-hero-actions">
                       <button className="secondary-button" disabled={savingPlan || Boolean(trackingTaskId)} onClick={savePlanDraft}>
                         {savingPlan ? "保存中" : "保存计划"}
                       </button>
@@ -355,7 +362,6 @@ function StoryEventsContent() {
                   <div className="panel-header">
                     <div>
                       <div className="panel-title">事件级质量审校</div>
-                      <div className="panel-subtitle">从整段剧情判断闭环、节奏、人物推进和伏笔推进。</div>
                     </div>
                     <span className={`tag ${scoreTone(eventDetail.quality_report?.scores?.overall || 0)}`}>
                       总分 {eventDetail.quality_report?.scores?.overall ?? "-"}
@@ -400,7 +406,6 @@ function StoryEventsContent() {
 
                 <ReviewIssuePanel
                   title="事件级质量建议"
-                  subtitle="系统从闭环、节奏、人物推进和伏笔推进角度记录事件质量建议。"
                   issues={eventDetail.event_issues || []}
                   emptyTitle="暂无事件级质量建议"
                   emptyDescription="事件级审校完成后，系统质量建议会显示在这里。"
@@ -410,7 +415,6 @@ function StoryEventsContent() {
                   <div className="panel-header">
                     <div>
                       <div className="panel-title">章节计划看板</div>
-                      <div className="panel-subtitle">每张卡片对应一个章节计划，可局部重跑或从该章继续生成。</div>
                     </div>
                   </div>
                   <div className="panel-body event-board">
@@ -461,7 +465,6 @@ function StoryEventsContent() {
 
                 <ReviewIssuePanel
                   title="后续自动处理"
-                  subtitle="这里只显示系统尚未自动闭环的内部处理项。"
                   issues={eventDetail.open_issues || []}
                   emptyTitle="当前事件暂无后续处理项"
                   emptyDescription="连续性审校和事件级审校都已进入系统自动闭环。"

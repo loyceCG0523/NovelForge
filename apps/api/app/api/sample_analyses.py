@@ -1,12 +1,14 @@
 """样本分析接口。"""
 
+import hashlib
+from datetime import UTC, datetime
 from uuid import uuid4
 from uuid import UUID
 from urllib.parse import quote
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile, status
 from fastapi.responses import PlainTextResponse
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from app.api.dependencies import get_owned_novel
@@ -14,6 +16,7 @@ from app.core.security import get_current_user
 from app.db.session import get_db
 from app.models.novel import Novel
 from app.models.sample_analysis import SampleAnalysis
+from app.models.sample_collaboration import SampleAnnotation, SampleTextSegment
 from app.models.user import User
 from app.schemas.sample_analysis import SampleAnalysisLibraryRead, SampleAnalysisRead
 from app.schemas.task import AgentRunRequest
@@ -43,20 +46,18 @@ def _compact_report_for_read(report: dict | None) -> dict:
         profile = {
             "available": bool(strategy.get("available")),
             "model": strategy.get("model", ""),
-            "summary": strategy.get("style_summary", ""),
-            "language_rules": [str(value)[:220] for value in language_rules[:4]],
-            "anti_ai_rules": [
+            "overall_evaluation": strategy.get("style_summary", ""),
+            "language_principles": [str(value)[:220] for value in language_rules[:4]],
+            "avoid_errors": [
                 str(value)[:220]
                 for value in (strategy.get("anti_ai_guidelines") or [])[:3]
             ],
         }
     return {
-        "schema_version": report.get("schema_version", "sample_analysis.v3"),
+        "schema_version": report.get("schema_version", "sample_analysis.v5"),
         "stage": report.get("stage", ""),
         "sample": report.get("sample") or {},
         "reference_profile": profile,
-        "experience_summary": report.get("experience_summary") or {},
-        "rag_index": report.get("rag_index") or {},
     }
 
 
@@ -67,23 +68,104 @@ def _analysis_read_payload(analysis: SampleAnalysis) -> dict:
     return payload
 
 
+def _annotation_index_status(stats: dict) -> str:
+    """根据可验证计数生成稳定状态，不再读取旧版 rag_index 报告。"""
+    if int(stats.get("annotation_count") or 0) == 0:
+        return "unannotated"
+    indexed = int(stats.get("indexed_count") or 0)
+    pending_index = int(stats.get("pending_index_count") or 0)
+    if indexed > 0:
+        return "partial" if pending_index > 0 else "ready"
+    if pending_index > 0:
+        return "pending_index"
+    if int(stats.get("pending_review_count") or 0) > 0:
+        return "pending_review"
+    return "no_trusted_annotations"
+
+
+def _annotation_index_stats_by_analysis(
+    db: Session,
+    analysis_ids: list[UUID],
+) -> dict[UUID, dict]:
+    if not analysis_ids:
+        return {}
+    trusted = SampleAnnotation.status.in_(["trusted", "trusted_private"])
+    indexed = trusted & SampleAnnotation.embedding.is_not(None) & (
+        SampleAnnotation.embedding_model != ""
+    )
+    rows = db.execute(
+        select(
+            SampleAnnotation.sample_analysis_id,
+            func.count(SampleAnnotation.id).label("annotation_count"),
+            func.count(SampleAnnotation.id).filter(trusted).label("trusted_count"),
+            func.count(SampleAnnotation.id).filter(indexed).label("indexed_count"),
+            func.count(SampleAnnotation.id)
+            .filter(SampleAnnotation.status == "pending")
+            .label("pending_review_count"),
+            func.count(SampleAnnotation.id)
+            .filter(trusted & ~indexed)
+            .label("pending_index_count"),
+            func.count(SampleAnnotation.id)
+            .filter(SampleAnnotation.status == "quarantined")
+            .label("quarantined_count"),
+        )
+        .where(SampleAnnotation.sample_analysis_id.in_(analysis_ids))
+        .group_by(SampleAnnotation.sample_analysis_id)
+    ).all()
+    result: dict[UUID, dict] = {}
+    for row in rows:
+        stats = {
+            "annotation_count": int(row.annotation_count or 0),
+            "trusted_count": int(row.trusted_count or 0),
+            "indexed_count": int(row.indexed_count or 0),
+            "pending_review_count": int(row.pending_review_count or 0),
+            "pending_index_count": int(row.pending_index_count or 0),
+            "quarantined_count": int(row.quarantined_count or 0),
+        }
+        result[row.sample_analysis_id] = {
+            **stats,
+            "status": _annotation_index_status(stats),
+        }
+    return result
+
+
 def _library_rows(db: Session, current_user: User, completed_only: bool) -> list[dict]:
     """按用户读取样本库，并附带可选的源作品名称。"""
     statement = (
         select(SampleAnalysis, Novel.title)
         .outerjoin(Novel, SampleAnalysis.novel_id == Novel.id)
-        .where(SampleAnalysis.owner_id == current_user.id)
+        .where(
+            SampleAnalysis.owner_id == current_user.id,
+            SampleAnalysis.status != "removed",
+        )
         .order_by(SampleAnalysis.updated_at.desc())
     )
     if completed_only:
         statement = statement.where(SampleAnalysis.status.in_(["completed", "active"]))
 
+    rows = db.execute(statement).all()
+    index_stats = _annotation_index_stats_by_analysis(
+        db,
+        [analysis.id for analysis, _novel_title in rows],
+    )
     return [
         {
             **_analysis_read_payload(analysis),
             "source_novel_title": _sample_source_title(novel_title),
+            "annotation_index": index_stats.get(
+                analysis.id,
+                {
+                    "status": "unannotated",
+                    "annotation_count": 0,
+                    "trusted_count": 0,
+                    "indexed_count": 0,
+                    "pending_review_count": 0,
+                    "pending_index_count": 0,
+                    "quarantined_count": 0,
+                },
+            ),
         }
-        for analysis, novel_title in db.execute(statement).all()
+        for analysis, novel_title in rows
     ]
 
 
@@ -94,7 +176,31 @@ def _validate_sample_file(file: UploadFile) -> int:
     file.file.seek(0)
     if file_size < 200:
         raise HTTPException(status_code=400, detail="样本文本太短，至少需要 200 字符左右的内容")
+    if file_size > 50 * 1024 * 1024:
+        raise HTTPException(status_code=413, detail="单个样本文本不能超过50MB")
+    suffix = (file.filename or "").lower().rsplit(".", 1)[-1]
+    if suffix not in {"txt", "md", "text"}:
+        raise HTTPException(status_code=400, detail="只支持TXT或MD文本文件")
     return file_size
+
+
+def _file_hash(file: UploadFile) -> str:
+    digest = hashlib.sha256()
+    while chunk := file.file.read(1024 * 1024):
+        digest.update(chunk)
+    file.file.seek(0)
+    return digest.hexdigest()
+
+
+def _remove_sample_objects(db: Session, analysis: SampleAnalysis) -> None:
+    remove_object(analysis.source_object_key)
+    segments = db.scalars(
+        select(SampleTextSegment).where(
+            SampleTextSegment.sample_analysis_id == analysis.id
+        )
+    ).all()
+    for segment in segments:
+        remove_object(segment.source_object_key)
 
 
 @library_router.get("/library", response_model=list[SampleAnalysisLibraryRead])
@@ -120,6 +226,9 @@ async def create_standalone_sample_analysis(
     sample_title: str = Form(...),
     source_author: str = Form(""),
     source_genre: str = Form(""),
+    visibility: str = Form("private"),
+    reuse_policy: str = Form("reference_only"),
+    rights_declared: bool = Form(False),
     file: UploadFile = File(...),
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
@@ -129,6 +238,13 @@ async def create_standalone_sample_analysis(
     样本分析是用户级样本库资产，不要求先创建小说；后续作品只选择引用这些报告。
     """
     file_size = _validate_sample_file(file)
+    if visibility not in {"private", "public"}:
+        raise HTTPException(status_code=400, detail="样本可见性不受支持")
+    if reuse_policy not in {"reference_only", "excerpt_reuse"}:
+        raise HTTPException(status_code=400, detail="复用许可不受支持")
+    if visibility == "public" and not rights_declared:
+        raise HTTPException(status_code=400, detail="公开样本前必须确认拥有分享权利")
+    content_hash = _file_hash(file)
     analysis_id = uuid4()
     safe_name = sanitize_filename(file.filename or f"{sample_title}.txt")
     object_key = f"users/{current_user.id}/sample-analyses/{analysis_id}/{safe_name}"
@@ -150,7 +266,13 @@ async def create_standalone_sample_analysis(
         source_file_name=safe_name,
         source_object_key=object_key,
         source_file_size=file_size,
-        summary="样本已上传，等待并行生成剧情与表达经验文档。",
+        summary="样本已上传，等待生成总体评价、语言表达原则和应避免错误。",
+        visibility=visibility,
+        publication_status="published" if visibility == "public" else "private",
+        reuse_policy=reuse_policy,
+        rights_declared=rights_declared,
+        content_hash=content_hash,
+        published_at=datetime.now(UTC) if visibility == "public" else None,
         report={
             "stage": "queued",
             "sample": {"title": sample_title, "genre": source_genre},
@@ -191,7 +313,20 @@ def delete_standalone_sample_analysis(
     analysis = db.get(SampleAnalysis, analysis_id)
     if analysis is None or analysis.owner_id != current_user.id:
         raise HTTPException(status_code=404, detail="Sample analysis not found")
-    remove_object(analysis.source_object_key)
+    community_annotations = db.scalar(
+        select(func.count(SampleAnnotation.id)).where(
+            SampleAnnotation.sample_analysis_id == analysis.id,
+            SampleAnnotation.creator_id != current_user.id,
+        )
+    ) or 0
+    if analysis.visibility == "public" and community_annotations:
+        analysis.visibility = "private"
+        analysis.publication_status = "removed"
+        analysis.status = "removed"
+        analysis.version += 1
+        db.commit()
+        return
+    _remove_sample_objects(db, analysis)
     db.delete(analysis)
     db.commit()
 
@@ -233,7 +368,7 @@ def reindex_standalone_sample_analysis(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ) -> SampleAnalysis:
-    """重新并行总结原作，生成经验文档并更新经验卡向量索引。"""
+    """重新生成三项总体分析，并把旧阅读分段安全转换为章节。"""
     analysis = db.get(SampleAnalysis, analysis_id)
     if analysis is None or analysis.owner_id != current_user.id:
         raise HTTPException(status_code=404, detail="Sample analysis not found")
@@ -255,12 +390,11 @@ def reindex_standalone_sample_analysis(
     analysis.task_id = task.id
     analysis.status = "queued"
     analysis.error_message = ""
-    analysis.summary = "已进入队列，准备重新生成经验文档并更新索引。"
+    analysis.summary = "已进入队列，准备重新生成三项总体分析与章节目录。"
     analysis.report = {
         **(analysis.report or {}),
         "stage": "queued",
         "task_id": str(task.id),
-        "rag_index": {"status": "queued"},
     }
     db.commit()
     db.refresh(analysis)
@@ -297,6 +431,7 @@ async def create_sample_analysis(
     API 只负责保存文件和入队，长篇样本由 Worker 最多十路并行总结经验。
     """
     file_size = _validate_sample_file(file)
+    content_hash = _file_hash(file)
     analysis_id = uuid4()
     safe_name = sanitize_filename(file.filename or f"{sample_title}.txt")
     object_key = f"users/{novel.owner_id}/sample-analyses/{analysis_id}/{safe_name}"
@@ -318,7 +453,8 @@ async def create_sample_analysis(
         source_file_name=safe_name,
         source_object_key=object_key,
         source_file_size=file_size,
-        summary="样本已上传，等待并行生成剧情与表达经验文档。",
+        summary="样本已上传，等待生成总体评价、语言表达原则和应避免错误。",
+        content_hash=content_hash,
         report={
             "stage": "queued",
             "sample": {"title": sample_title, "genre": source_genre or novel.genre},
@@ -360,6 +496,6 @@ def delete_sample_analysis(
     analysis = db.get(SampleAnalysis, analysis_id)
     if analysis is None or analysis.novel_id != novel.id:
         raise HTTPException(status_code=404, detail="Sample analysis not found")
-    remove_object(analysis.source_object_key)
+    _remove_sample_objects(db, analysis)
     db.delete(analysis)
     db.commit()

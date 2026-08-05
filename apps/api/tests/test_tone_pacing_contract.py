@@ -21,7 +21,7 @@ class TonePacingContractTests(unittest.TestCase):
 
         self.assertTrue(is_comedy_focused("都市、恋爱", brief))
         self.assertEqual(contract["mode"], "high_density_light_comedy")
-        self.assertIn("2—3个", text)
+        self.assertIn("4—6个", text)
         self.assertIn("手续、准备、训练、调查、赶路、采购和规则确认", text)
         self.assertIn("连续低落", text)
 

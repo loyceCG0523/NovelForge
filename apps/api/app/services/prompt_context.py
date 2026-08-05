@@ -112,15 +112,21 @@ def _compact_expression_experience(value: Any) -> dict[str, Any]:
 def compact_expression_reference_pack(reference_pack: dict[str, Any] | None) -> dict[str, Any]:
     """只把本章最相关的少量表达经验卡送入模型。"""
     reference_pack = reference_pack or {}
+    minimum_required = max(1, int(reference_pack.get("minimum_required") or 1))
     return {
         "status": reference_pack.get("status", "skipped"),
+        "minimum_required": minimum_required,
+        "requirement_satisfied": (
+            len(reference_pack.get("references") or []) >= minimum_required
+        ),
         "usage_policy": {
-            "allowed": "学习真实人物如何称呼、试探、回避、打断、答非所问，以及琐碎动作怎样承载未说破的关系",
-            "forbidden": "复制连续措辞、专名、人物关系、情节或沿用同一比喻载体",
+            "required": "本章写作前必须阅读并迁移至少一条参考中的表达或叙事机制",
+            "allowed": "优先阅读高分原文亮点片段，学习真实人物如何称呼、试探、回避、打断、答非所问和短促补刀；缺乏独创性的通用短语可直接使用",
+            "forbidden": "不得复制或近似改写具有辨识度的完整包袱、连续对话、专名、人物关系、情节或同一比喻载体",
         },
         "references": [
               {
-                  "passage_id": item.get("passage_id", ""),
+                  "reference_id": item.get("annotation_id") or item.get("passage_id", ""),
                   "passage_type": item.get("passage_type", ""),
                   "excerpt": item.get("excerpt", ""),
                   "technique": item.get("technique", ""),
@@ -138,7 +144,6 @@ def compact_meme_reference_pack(reference_pack: dict[str, Any] | None) -> dict[s
     reference_pack = reference_pack or {}
     return {
         "status": reference_pack.get("status", "skipped"),
-        "story_year": reference_pack.get("story_year"),
         "event_used_phrases": (
             reference_pack.get("event_used_phrases") or []
         )[:12],
@@ -152,7 +157,6 @@ def compact_meme_reference_pack(reference_pack: dict[str, Any] | None) -> dict[s
                 "phrase": item.get("phrase", ""),
                 "meaning": item.get("meaning", ""),
                 "suitable_scenes": item.get("suitable_scenes", ""),
-                "popularity_period": item.get("popularity_period", ""),
                 "scene_fit_score": item.get("scene_fit_score", 0),
                 "scene_fit": item.get("scene_fit") or {},
             }

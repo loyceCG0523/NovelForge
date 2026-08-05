@@ -4,21 +4,19 @@ import { useEffect, useMemo, useRef, useState } from "react";
 
 import AppShell from "@/components/AppShell";
 import EmptyState from "@/components/EmptyState";
-import { apiFetch } from "@/lib/api";
+import { apiDownload, apiFetch } from "@/lib/api";
 
 
 const EMPTY_MEME_FORM = {
   phrase: "",
   meaning: "",
-  origin_event: "",
-  suitable_scenes: "",
-  popularity_period: "",
-  source_urls: ""
+  suitable_scenes: ""
 };
 
 
 export default function MemeLibraryPage() {
   const fileRef = useRef(null);
+  const editorRef = useRef(null);
   const [entries, setEntries] = useState([]);
   const [query, setQuery] = useState("");
   const [sourceType, setSourceType] = useState("all");
@@ -44,6 +42,21 @@ export default function MemeLibraryPage() {
   useEffect(() => {
     loadEntries().catch((err) => setError(err.message));
   }, [sourceType]);
+
+  useEffect(() => {
+    if (!editor) return undefined;
+    const frame = window.requestAnimationFrame(() => {
+      const editorElement = editorRef.current;
+      if (!editorElement) return;
+      const reduceMotion = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+      editorElement.scrollIntoView({
+        behavior: reduceMotion ? "auto" : "smooth",
+        block: "start"
+      });
+      editorElement.querySelector("input")?.focus({ preventScroll: true });
+    });
+    return () => window.cancelAnimationFrame(frame);
+  }, [editor]);
 
   const stats = useMemo(() => ({
     builtin: entries.filter((item) => item.source_type === "builtin").length,
@@ -71,6 +84,20 @@ export default function MemeLibraryPage() {
       );
       if (result.errors?.length) setError(result.errors.join("；"));
       await loadEntries();
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setWorking("");
+    }
+  }
+
+  async function exportAll() {
+    setWorking("export");
+    setMessage("");
+    setError("");
+    try {
+      const filename = await apiDownload("/api/meme-library/export", "热梗知识库.xlsx");
+      setMessage(`全部热梗已导出：${filename}`);
     } catch (err) {
       setError(err.message);
     } finally {
@@ -117,14 +144,11 @@ export default function MemeLibraryPage() {
   }
 
   function openEditEditor(entry) {
-    setEditor({ mode: "edit", entryId: entry.id });
+    setEditor({ mode: "edit", entryId: entry.id, sourceType: entry.source_type });
     setForm({
       phrase: entry.phrase || "",
       meaning: entry.meaning || "",
-      origin_event: entry.origin_event || "",
-      suitable_scenes: entry.suitable_scenes || "",
-      popularity_period: entry.popularity_period || "",
-      source_urls: (entry.source_urls || []).join("\n")
+      suitable_scenes: entry.suitable_scenes || ""
     });
     setMessage("");
     setError("");
@@ -140,13 +164,7 @@ export default function MemeLibraryPage() {
     setWorking("save");
     setMessage("");
     setError("");
-    const payload = {
-      ...form,
-      source_urls: form.source_urls
-        .split(/\r?\n|\|/)
-        .map((item) => item.trim())
-        .filter(Boolean)
-    };
+    const payload = { ...form };
     try {
       const path = editor.mode === "create"
         ? "/api/meme-library"
@@ -175,14 +193,16 @@ export default function MemeLibraryPage() {
   }
 
   async function removeEntry(entry) {
-    if (!window.confirm(`删除用户热梗“${entry.phrase}”？`)) return;
+    const sourceLabel = entry.source_type === "builtin" ? "系统内置" : "用户扩展";
+    const impact = entry.source_type === "builtin" ? "删除后将对整个本地系统生效，且不会在重建索引时自动恢复。" : "";
+    if (!window.confirm(`删除${sourceLabel}热梗“${entry.phrase}”？${impact}`)) return;
     setWorking(entry.id);
     setError("");
     try {
       await apiFetch(`/api/meme-library/${entry.id}`, { method: "DELETE" });
       setEntries((current) => current.filter((item) => item.id !== entry.id));
       if (editor?.entryId === entry.id) setEditor(null);
-      setMessage(`已删除用户热梗“${entry.phrase}”。`);
+      setMessage(`已删除${sourceLabel}热梗“${entry.phrase}”。`);
     } catch (err) {
       setError(err.message);
     } finally {
@@ -193,18 +213,18 @@ export default function MemeLibraryPage() {
   return (
     <AppShell
       title="热梗库"
-      subtitle="系统内置审核库 + 用户扩展库；章节生成前使用 Qwen RAG 按人物关系和交流场景检索"
-      actions={<span className="tag purple">只检索数据库，不联网搜梗</span>}
     >
       <section className="panel">
         <div className="panel-header">
           <div>
             <div className="panel-title">热梗知识库</div>
-            <div className="panel-subtitle">内置库只读；你可以按同样的6列表头导入 XLSX 或 UTF-8 CSV 扩展库。</div>
           </div>
           <div className="inline-actions">
             <button className="secondary-button" disabled={Boolean(working)} onClick={openCreateEditor}>
               新增热梗
+            </button>
+            <button className="secondary-button" disabled={Boolean(working)} onClick={exportAll}>
+              {working === "export" ? "导出中…" : "导出全部热梗"}
             </button>
             <input ref={fileRef} hidden type="file" accept=".xlsx,.csv" onChange={importFile} />
             <button className="secondary-button" disabled={Boolean(working)} onClick={() => fileRef.current?.click()}>
@@ -218,10 +238,14 @@ export default function MemeLibraryPage() {
         <div className="panel-body settings-stack">
           {(message || error) ? <div className={error ? "error-box" : "success-box"}>{error || message}</div> : null}
           {editor ? (
-            <form className="meme-library-editor" onSubmit={saveEntry}>
+            <form ref={editorRef} className="meme-library-editor" onSubmit={saveEntry}>
               <div className="meme-library-editor-header">
                 <div>
-                  <strong>{editor.mode === "create" ? "手动新增热梗" : "编辑用户热梗"}</strong>
+                  <strong>
+                    {editor.mode === "create"
+                      ? "手动新增热梗"
+                      : `编辑${editor.sourceType === "builtin" ? "系统内置" : "用户扩展"}热梗`}
+                  </strong>
                   <span>修改原词、真实含义或适用场景后，旧向量会自动失效。</span>
                 </div>
                 <button className="text-button" type="button" onClick={() => setEditor(null)}>取消</button>
@@ -231,25 +255,13 @@ export default function MemeLibraryPage() {
                   <label>热梗原词</label>
                   <input required maxLength={120} value={form.phrase} onChange={(event) => updateForm("phrase", event.target.value)} />
                 </div>
-                <div className="field">
-                  <label>流行时间</label>
-                  <input required maxLength={80} placeholder="如：2025-11~2026-01" value={form.popularity_period} onChange={(event) => updateForm("popularity_period", event.target.value)} />
-                </div>
                 <div className="field meme-editor-wide">
                   <label>真实含义</label>
                   <textarea required maxLength={1000} rows={3} value={form.meaning} onChange={(event) => updateForm("meaning", event.target.value)} />
                 </div>
                 <div className="field meme-editor-wide">
-                  <label>出处事件</label>
-                  <textarea required maxLength={1600} rows={3} value={form.origin_event} onChange={(event) => updateForm("origin_event", event.target.value)} />
-                </div>
-                <div className="field meme-editor-wide">
                   <label>适用人物关系、情绪与场景</label>
                   <textarea required maxLength={1200} rows={4} value={form.suitable_scenes} onChange={(event) => updateForm("suitable_scenes", event.target.value)} />
-                </div>
-                <div className="field meme-editor-wide">
-                  <label>来源链接</label>
-                  <textarea required rows={2} placeholder="每行一个 http:// 或 https:// 链接，最多 5 个" value={form.source_urls} onChange={(event) => updateForm("source_urls", event.target.value)} />
                 </div>
               </div>
               <div className="meme-library-editor-actions">
@@ -279,8 +291,8 @@ export default function MemeLibraryPage() {
             </select>
             <button className="secondary-button" onClick={() => loadEntries().catch((err) => setError(err.message))}>搜索</button>
           </div>
-          {loading ? <div className="route-loading">正在加载热梗库…</div> : entries.length === 0 ? (
-            <EmptyState title="没有匹配条目" description="调整筛选条件，或手动新增、导入符合6列表头的扩展库文件。" />
+          {loading ? <div className="inline-loading">正在加载热梗库…</div> : entries.length === 0 ? (
+            <EmptyState title="没有匹配条目" description="调整筛选条件，或手动新增、导入符合3列表头的扩展库文件。" />
           ) : (
             <div className="meme-library-list">
               {entries.map((entry) => (
@@ -291,25 +303,18 @@ export default function MemeLibraryPage() {
                       <span className={`tag ${entry.source_type === "builtin" ? "green" : "purple"}`}>
                         {entry.source_type === "builtin" ? "系统内置" : "用户扩展"}
                       </span>
-                      <span className="memory-range">{entry.popularity_period}</span>
                     </div>
                     <p>{entry.meaning}</p>
                     <small>{entry.suitable_scenes}</small>
-                    <small className="meme-library-origin">出处：{entry.origin_event}</small>
                   </div>
                   <div className="meme-library-row-actions">
-                    {entry.source_urls?.[0] ? <a className="secondary-button compact-button" href={entry.source_urls[0]} target="_blank" rel="noreferrer">来源</a> : null}
-                    {entry.source_type === "user" ? (
-                      <>
-                        <button className="secondary-button compact-button" disabled={working === entry.id} onClick={() => openEditEditor(entry)}>
-                          编辑
-                        </button>
-                        <button className="secondary-button compact-button" disabled={working === entry.id} onClick={() => toggleEntry(entry)}>
-                          {entry.enabled ? "停用" : "启用"}
-                        </button>
-                        <button className="danger-button" disabled={working === entry.id} onClick={() => removeEntry(entry)}>删除</button>
-                      </>
-                    ) : null}
+                    <button className="secondary-button compact-button" disabled={working === entry.id} onClick={() => openEditEditor(entry)}>
+                      编辑
+                    </button>
+                    <button className="secondary-button compact-button" disabled={working === entry.id} onClick={() => toggleEntry(entry)}>
+                      {entry.enabled ? "停用" : "启用"}
+                    </button>
+                    <button className="danger-button" disabled={working === entry.id} onClick={() => removeEntry(entry)}>删除</button>
                   </div>
                 </article>
               ))}

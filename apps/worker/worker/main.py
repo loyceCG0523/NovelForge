@@ -6,6 +6,7 @@ API 负责创建任务并写入 Redis 队列：Worker 独立消费队列并执�
 """
 
 import argparse
+import hashlib
 import sys
 import threading
 import time
@@ -16,7 +17,7 @@ from uuid import UUID
 
 from redis import Redis
 from redis.exceptions import TimeoutError as RedisTimeoutError
-from sqlalchemy import func, select, update
+from sqlalchemy import delete, func, select, update
 from sqlalchemy.orm import Session
 
 
@@ -33,6 +34,11 @@ from app.models.event_chapter_plan import EventChapterPlan  # noqa: E402
 from app.models.generation_task import GenerationTask  # noqa: E402
 from app.models.novel import Novel  # noqa: E402
 from app.models.sample_analysis import SampleAnalysis  # noqa: E402
+from app.models.sample_collaboration import (  # noqa: E402
+    SampleAnnotation,
+    SampleTextSegment,
+)
+from app.models.sample_passage import SamplePassage  # noqa: E402
 from app.models.story_event import StoryEvent  # noqa: E402
 from app.models.user import User  # noqa: E402
 from app.services.agent_contracts import (  # noqa: E402
@@ -61,9 +67,21 @@ from app.services.event_revision_service import (  # noqa: E402
     retry_failed_event_revision_chapters,
     review_and_repair_story_event,
 )
+from app.services.agents.sample_analysis_agent import (  # noqa: E402
+    analyze_sample_chunks,
+    summarize_sample_report,
+)
+from app.services.embedding_client import EmbeddingClient, build_embedding_config  # noqa: E402
 from app.services.llm_client import build_llm_config, build_review_llm_config  # noqa: E402
-from app.services.sample_experience_builder import build_sample_experience_document  # noqa: E402
-from app.services.sample_passage_indexer import index_sample_experiences  # noqa: E402
+from app.services.object_storage import (  # noqa: E402
+    read_text_object,
+    remove_object,
+    upload_text,
+)
+from app.services.sample_chapter_splitter import (  # noqa: E402
+    locate_quote_in_units,
+    split_sample_chapters,
+)
 from app.services.novel_production_handoff import (  # noqa: E402
     complete_event_child_handoff,
     fail_event_child_handoff,
@@ -83,6 +101,7 @@ TASK_AGENT_NAMES = {
     "check_story_event_quality": "QualityAgent",
     "build_story_bible": "StoryPlanningAgent",
     "analyze_sample": "SampleAnalysisAgent",
+    "index_sample_annotation": "SampleAnnotationIndexer",
     "sync_chapter_memory": "MemoryAgent",
     "retry_event_revision": "EventRevisionRetryAgent",
 }
@@ -909,7 +928,7 @@ def handle_build_story_bible(db: Session, task: GenerationTask, novel: Novel) ->
     }
 
 
-def handle_analyze_sample(db: Session, task: GenerationTask, novel: Novel | None = None) -> dict:
+def _legacy_handle_analyze_sample(db: Session, task: GenerationTask, novel: Novel | None = None) -> dict:
     """最多十路并行拆解原作，生成经验文档并建立经验卡索引。"""
     task_input = (task.result_payload or {}).get("input", {})
     analysis_id = task_input.get("analysis_id")
@@ -1087,6 +1106,253 @@ def handle_analyze_sample(db: Session, task: GenerationTask, novel: Novel | None
             "sample_analysis",
             generation_mode="llm",
         ),
+    }
+
+
+def _ensure_sample_chapter_units(
+    db: Session,
+    analysis: SampleAnalysis,
+) -> list[SampleTextSegment]:
+    """建立章节阅读单元，并把旧分段标注无损迁移到新章节。"""
+    source_text = read_text_object(analysis.source_object_key, max_bytes=60 * 1024 * 1024)
+    chapter_units = split_sample_chapters(source_text)
+    if not chapter_units:
+        raise ValueError("样本文本为空或无法建立章节目录")
+    existing_units = db.scalars(
+        select(SampleTextSegment)
+        .where(SampleTextSegment.sample_analysis_id == analysis.id)
+        .order_by(SampleTextSegment.sequence_no)
+    ).all()
+    expected_hashes = [
+        hashlib.sha256(unit.content.encode("utf-8")).hexdigest()
+        for unit in chapter_units
+    ]
+    if (
+        len(existing_units) == len(chapter_units)
+        and all(unit.unit_type != "legacy_segment" for unit in existing_units)
+        and [unit.content_hash for unit in existing_units] == expected_hashes
+    ):
+        return list(existing_units)
+
+    old_by_id = {unit.id: unit for unit in existing_units}
+    annotations = db.scalars(
+        select(SampleAnnotation).where(SampleAnnotation.sample_analysis_id == analysis.id)
+    ).all()
+    annotation_locations: dict[UUID, tuple[int, int, int]] = {}
+    for annotation in annotations:
+        old_unit = old_by_id.get(annotation.segment_id)
+        approximate_offset = (
+            int(old_unit.start_offset) + int(annotation.start_offset)
+            if old_unit is not None
+            else 0
+        )
+        located = locate_quote_in_units(
+            chapter_units,
+            annotation.quote_text,
+            approximate_offset=approximate_offset,
+        )
+        if located is None:
+            raise ValueError(
+                f"旧标注 {annotation.id} 无法在章节化原文中重新定位；已停止转换以保护标注"
+            )
+        annotation_locations[annotation.id] = located
+
+    created_units: list[SampleTextSegment] = []
+    created_object_keys: list[str] = []
+    old_object_keys = [unit.source_object_key for unit in existing_units]
+    try:
+        for index, chapter in enumerate(chapter_units, start=1):
+            content_hash = expected_hashes[index - 1]
+            object_key = (
+                f"users/{analysis.owner_id}/sample-analyses/{analysis.id}/"
+                f"chapters/{index:06d}-{content_hash[:12]}.txt"
+            )
+            upload_text(object_key, chapter.content)
+            created_object_keys.append(object_key)
+            record = SampleTextSegment(
+                sample_analysis_id=analysis.id,
+                sequence_no=1_000_000 + index,
+                title=chapter.title,
+                unit_type=chapter.unit_type,
+                start_offset=chapter.start_offset,
+                end_offset=chapter.end_offset,
+                source_object_key=object_key,
+                content_hash=content_hash,
+            )
+            db.add(record)
+            created_units.append(record)
+        db.flush()
+
+        for annotation in annotations:
+            unit_index, local_start, local_end = annotation_locations[annotation.id]
+            annotation.segment_id = created_units[unit_index].id
+            annotation.start_offset = local_start
+            annotation.end_offset = local_end
+        db.flush()
+
+        for old_unit in existing_units:
+            db.delete(old_unit)
+        db.flush()
+        for index, record in enumerate(created_units, start=1):
+            record.sequence_no = index
+        db.commit()
+    except Exception:
+        db.rollback()
+        for object_key in created_object_keys:
+            remove_object(object_key)
+        raise
+
+    for object_key in old_object_keys:
+        if object_key not in created_object_keys:
+            remove_object(object_key)
+    return created_units
+
+
+def handle_analyze_sample(db: Session, task: GenerationTask, novel: Novel | None = None) -> dict:
+    """建立MinIO章节阅读单元，并且只生成三项总体分析。"""
+    task_input = (task.result_payload or {}).get("input", {})
+    analysis_id = task_input.get("analysis_id")
+    if not analysis_id:
+        raise ValueError("样本分析任务缺少 analysis_id")
+    analysis = db.get(SampleAnalysis, UUID(str(analysis_id)))
+    if analysis is None:
+        raise ValueError("样本分析记录不存在")
+
+    analysis.status = "running"
+    analysis.error_message = ""
+    analysis.analyzed_chunk_count = 0
+    analysis.summary = "正在识别原文章节并生成三项总体分析。"
+    analysis.report = {
+        "schema_version": "sample_analysis.v5",
+        "stage": "preparing_chapters",
+        "task_id": str(task.id),
+        "sample": {
+            "title": analysis.sample_title,
+            "genre": analysis.source_genre or (novel.genre if novel else ""),
+        },
+    }
+    db.commit()
+
+    owner = db.get(User, analysis.owner_id)
+    llm_config = build_review_llm_config(owner.preferences if owner else {})
+    # 旧版模型自动挑选的经验卡不再进入新协同知识库。
+    db.execute(
+        delete(SamplePassage).where(SamplePassage.sample_analysis_id == analysis.id)
+    )
+    db.commit()
+    chapter_units = _ensure_sample_chapter_units(db, analysis)
+    analysis.chapter_count = len(chapter_units)
+    analysis.chunk_count = len(chapter_units)
+    db.commit()
+
+    def source_chunks():
+        for chapter in chapter_units:
+            yield read_text_object(chapter.source_object_key)
+
+    def on_progress(completed: int, _chunk_report: dict) -> None:
+        analysis.analyzed_chunk_count = completed
+        analysis.chunk_count = max(analysis.chunk_count, completed)
+        analysis.summary = f"样本总体分析中：已处理 {completed} 个章节。"
+        analysis.report = {
+            **(analysis.report or {}),
+            "stage": "analyzing_overview",
+            "analysis_progress": {
+                "completed": completed,
+                "model": llm_config.model if llm_config else "",
+            },
+        }
+        db.commit()
+        task.result_payload = {
+            **(task.result_payload or {}),
+            "graph_status": f"样本总体分析中：已处理 {completed} 个章节",
+        }
+        mark_task(db, task, "running", min(88, 12 + completed))
+
+    report = analyze_sample_chunks(
+        sample_title=analysis.sample_title,
+        source_genre=analysis.source_genre or (novel.genre if novel else ""),
+        chunks=source_chunks(),
+        progress_callback=on_progress,
+        llm_config=llm_config,
+    )
+    sample_stats = report.get("sample") or {}
+    profile = report.get("reference_profile") or {}
+    analysis.source_word_count = int(sample_stats.get("word_count") or 0)
+    analysis.chapter_count = len(chapter_units)
+    analysis.chunk_count = len(chapter_units)
+    analysis.analyzed_chunk_count = analysis.chunk_count
+    analysis.metrics = {}
+    analysis.summary = summarize_sample_report(report)
+    analysis.report = {**report, "stage": "completed", "task_id": str(task.id)}
+    analysis.error_message = ""
+    analysis.status = "completed"
+    db.commit()
+    db.refresh(analysis)
+    return {
+        "agent": "SampleAnalysisAgent",
+        "analysis_id": str(analysis.id),
+        "status": analysis.status,
+        "source_word_count": analysis.source_word_count,
+        "chunk_count": analysis.chunk_count,
+        "llm_strategy_available": bool(profile.get("available")),
+        "analysis_model": llm_config.model if llm_config else "",
+        "annotation_index_strategy": "trusted_human_annotations_only",
+        "summary": analysis.summary,
+        "contract": agent_contract(
+            "SampleAnalysisAgent",
+            "sample_analysis",
+            generation_mode="llm" if llm_config else "deterministic",
+        ),
+    }
+
+
+def handle_index_sample_annotation(db: Session, task: GenerationTask) -> dict:
+    """只为可信人工标注生成一条百炼向量。"""
+    annotation_id = ((task.result_payload or {}).get("input") or {}).get("annotation_id")
+    if not annotation_id:
+        raise ValueError("标注索引任务缺少 annotation_id")
+    annotation = db.get(SampleAnnotation, UUID(str(annotation_id)))
+    if annotation is None:
+        raise ValueError("标注不存在")
+    if annotation.status not in {"trusted", "trusted_private"}:
+        annotation.embedding = None
+        annotation.embedding_model = ""
+        db.commit()
+        return {
+            "agent": "SampleAnnotationIndexer",
+            "annotation_id": str(annotation.id),
+            "status": "skipped",
+            "reason": "标注尚未达到可信状态",
+        }
+
+    analysis = db.get(SampleAnalysis, annotation.sample_analysis_id)
+    if analysis is None:
+        raise ValueError("标注所属样本不存在")
+    creator = db.get(User, annotation.creator_id)
+    owner = db.get(User, analysis.owner_id)
+    config = build_embedding_config(creator.preferences if creator else {})
+    if config is None and owner is not None:
+        config = build_embedding_config(owner.preferences or {})
+    if config is None:
+        raise ValueError("标注创建者和样本所有者均未配置百炼 Embedding API")
+
+    index_text = (
+        f"分类：{'、'.join(str(item) for item in (annotation.categories or []))}\n"
+        f"标注说明：{annotation.note or '无'}\n原文：{annotation.quote_text}"
+    )[:2400]
+    annotation.embedding = EmbeddingClient(config).embed(
+        [index_text],
+        text_type="document",
+        instruct="Represent a trusted Chinese fiction annotation for retrieval.",
+    )[0]
+    annotation.embedding_model = config.model
+    db.commit()
+    return {
+        "agent": "SampleAnnotationIndexer",
+        "annotation_id": str(annotation.id),
+        "status": "completed",
+        "embedding_model": config.model,
+        "embedding_dimensions": config.dimensions,
     }
 
 
@@ -1319,7 +1585,7 @@ def execute_task(db: Session, task_id: str) -> bool:
         return False
 
     novel = db.get(Novel, task.novel_id) if task.novel_id else None
-    if novel is None and task.task_type != "analyze_sample":
+    if novel is None and task.task_type not in {"analyze_sample", "index_sample_annotation"}:
         mark_task(db, task, "failed", 100, error_message="Novel not found")
         return True
 
@@ -1354,6 +1620,8 @@ def execute_task(db: Session, task_id: str) -> bool:
             output = handle_build_story_bible(db, task, novel)
         elif task.task_type == "analyze_sample":
             output = handle_analyze_sample(db, task, novel)
+        elif task.task_type == "index_sample_annotation":
+            output = handle_index_sample_annotation(db, task)
         elif task.task_type == "sync_chapter_memory":
             output = handle_sync_chapter_memory(db, task, novel)
         elif task.task_type == "retry_event_revision":

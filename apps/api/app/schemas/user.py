@@ -85,6 +85,7 @@ class ModelApiTestRequest(BaseModel):
     base_url: str = Field(default="", max_length=1000)
     model: str = Field(default="", max_length=200)
     api_key: str = Field(default="", max_length=2000)
+    context_window_tokens: int = Field(default=128_000, ge=4_096)
 
 
 class ModelApiTestResult(BaseModel):

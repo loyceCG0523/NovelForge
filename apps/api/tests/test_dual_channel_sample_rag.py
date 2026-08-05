@@ -4,17 +4,118 @@ from unittest.mock import patch
 
 from app.models.sample_analysis import SampleAnalysis
 from app.services.sample_passage_indexer import extract_sample_passage_candidates
-from app.services.sample_rag import build_expression_query
+from app.services.sample_rag import (
+    ChapterReferenceRequirementError,
+    build_chapter_reference_pack,
+    build_expression_query,
+    require_minimum_chapter_references,
+)
 from worker.graphs.event_generation_graph import (
+    _auxiliary_dominance_report,
     _build_event_plan_prompt,
+    _build_scene_orchestration_prompt,
     _build_simulated_event_plan,
     _candidate_diversity_report,
     _event_plan_quality_report,
+    _mark_auxiliary_semantically_passed,
+    _merge_chapter_plan_replacements,
+    _merge_scene_orchestration,
     _normalize_event_plan,
+    _semantic_auxiliary_targets,
 )
 
 
+def _complete_scene_execution():
+    return {
+        "entry_pressure": "门外的人正在催答复",
+        "protagonist_want": "主角想拖延决定",
+        "opposing_want": "对方要主角现在表态",
+        "tactic_turns": [
+            {
+                "actor": "主角",
+                "tactic": "用反问试探对方底线",
+                "counterforce": "对方给出不能回避的事实",
+                "local_change": "主角失去继续拖延的借口",
+            },
+            {
+                "actor": "对方",
+                "tactic": "提出一个带期限的选择",
+                "counterforce": "主角接受条件但改变执行方式",
+                "local_change": "双方关系和下一步行动被改写",
+            },
+        ],
+        "dialogue_pressure": {
+            "surface_topic": "是否马上离开",
+            "hidden_stakes": "双方都不愿承认自己害怕被抛下",
+            "decisive_exchange": "一次回避后的反问迫使主角表态",
+        },
+        "pov_reaction_chain": {
+            "observable_detail": "对方把门拉开一半却没有让路",
+            "biased_interpretation": "主角以为对方还在故意刁难",
+            "immediate_impulse": "主角想用玩笑掩饰自己其实想留下",
+            "visible_response": "主角嘴上催促，脚却没有往门外迈",
+        },
+        "dialogue_reaction_chain": {
+            "trigger": "对方问主角到底走不走",
+            "evasion_or_misread": "主角故意讨论门口太窄",
+            "countermove": "对方把门彻底关上，要求正面回答",
+            "local_consequence": "主角失去回避空间并提出留下条件",
+        },
+        "voice_contrast": [],
+        "absurd_comedy_mode": {"enabled": False},
+        "ending_residual_force": {
+            "last_change": "主角答应留下但提出新条件",
+            "reader_question": "对方会不会接受这个条件",
+            "next_chapter_first_beat": "从对方听完条件后的反应开始",
+        },
+    }
+
+
 class DualChannelSampleRagTests(unittest.TestCase):
+    def test_chapter_reference_minimum_is_a_hard_gate(self):
+        accepted = require_minimum_chapter_references(
+            {
+                "status": "completed",
+                "references": [{"annotation_id": "a1", "excerpt": "一条可信参考"}],
+            }
+        )
+
+        self.assertEqual(accepted["minimum_required"], 1)
+        self.assertTrue(accepted["requirement_satisfied"])
+        with self.assertRaises(ChapterReferenceRequirementError):
+            require_minimum_chapter_references(
+                {"status": "empty", "reason": "可信标注库为空", "references": []}
+            )
+
+    @patch("app.services.sample_rag._retrieve_reference_pack")
+    @patch("app.services.sample_rag.build_expression_query", return_value="当前章检索条件")
+    def test_chapter_reference_automatically_falls_back_to_plot_annotation(
+        self,
+        _build_query,
+        retrieve_pack,
+    ):
+        retrieve_pack.side_effect = [
+            {"status": "empty", "reason": "无表达标注", "references": []},
+            {
+                "status": "completed",
+                "references": [
+                    {"annotation_id": "plot-1", "excerpt": "一条可信剧情参考"}
+                ],
+                "total_chars": 8,
+            },
+        ]
+        db = SimpleNamespace(get=lambda *_args, **_kwargs: SimpleNamespace(preferences={}))
+        result = build_chapter_reference_pack(
+            db,
+            novel=SimpleNamespace(owner_id="owner"),
+            context={},
+        )
+
+        self.assertEqual(result["fallback_channel"], "plot")
+        self.assertEqual(len(result["references"]), 1)
+        self.assertEqual(retrieve_pack.call_args_list[0].kwargs["channel"], "language")
+        self.assertEqual(retrieve_pack.call_args_list[1].kwargs["channel"], "plot")
+
     def test_language_query_uses_relationship_not_fixed_plot_direction(self):
         novel = SimpleNamespace(genre="现实", premise="成长")
         context = {
@@ -24,6 +125,14 @@ class DualChannelSampleRagTests(unittest.TestCase):
                         "core_event": "只用于验证、不应进入语言查询的核心事件",
                         "ending_hook": "只用于验证、不应进入语言查询的章尾钩子",
                         "character_beats": ["母女都想和解，但谁也不肯先道歉"],
+                        "scene_execution": {
+                            "pov_reaction_chain": {
+                                "biased_interpretation": "女儿误以为母亲不想留她"
+                            },
+                            "dialogue_reaction_chain": {
+                                "evasion_or_misread": "母亲故意问晚饭吃什么"
+                            },
+                        },
                     }
                 }
             },
@@ -46,6 +155,10 @@ class DualChannelSampleRagTests(unittest.TestCase):
 
         self.assertIn("母女都想和解", query)
         self.assertIn("答非所问", query)
+        self.assertIn("女儿误以为母亲不想留她", query)
+        self.assertIn("对白刺激→回避/抓错重点→反击", query)
+        self.assertIn("身份自抬后的字面降格", query)
+        self.assertIn("围观者短促补刀", query)
         self.assertNotIn("不应进入语言查询的核心事件", query)
         self.assertNotIn("不应进入语言查询的章尾钩子", query)
 
@@ -143,6 +256,21 @@ class DualChannelSampleRagTests(unittest.TestCase):
         self.assertIn("primary_promise_served", prompt)
         self.assertIn("secondary_element_role", prompt)
         self.assertIn("reader_payoff", prompt)
+        self.assertIn("scene_execution", prompt)
+        self.assertIn("策略—反制—局部变化", prompt)
+        self.assertIn("一本正经跑偏", prompt)
+        self.assertIn("pov_reaction_chain", prompt)
+        self.assertIn("dialogue_reaction_chain", prompt)
+        self.assertIn("自利解释", prompt)
+        scene_prompt = "\n".join(
+            message["content"]
+            for message in _build_scene_orchestration_prompt(
+                {"chapter_plans": []},
+                {"primary_genre": "都市轻喜剧"},
+            )
+        )
+        self.assertIn("章节场面编排", scene_prompt)
+        self.assertIn("可观察细节→带私心的误读", scene_prompt)
         self.assertIn("流程完成", prompt)
         self.assertIn("最早未完成节点", prompt)
         self.assertIn("紧随其后的节点", prompt)
@@ -228,6 +356,7 @@ class DualChannelSampleRagTests(unittest.TestCase):
                 "plot_engine": "目标冲突",
                 "dramatic_turn": "行动产生意外后果",
                 "reader_payoff": "主角取得阶段进展",
+                "scene_execution": _complete_scene_execution(),
             }
         ]
         raw = {
@@ -255,7 +384,282 @@ class DualChannelSampleRagTests(unittest.TestCase):
         )
 
         self.assertTrue(passed["passed"])
+        self.assertEqual(passed["complete_scene_execution_count"], 1)
         self.assertFalse(missing_payoff["passed"])
+
+    def test_type_quality_gate_rejects_empty_scene_execution(self):
+        candidates = [
+            {
+                "plot_engine": engine,
+                "primary_promise_served": "类型承诺",
+                "secondary_element_role": "只作辅助",
+                "dramatic_escalation": "阻力升级",
+                "reader_payoff": "局势变化",
+            }
+            for engine in ("目标冲突", "关系变化", "信息反转", "限时选择")
+        ]
+        report = _event_plan_quality_report(
+            {
+                "genre_alignment": "类型一致",
+                "dramatic_escalation": "阻力升级",
+                "major_reversal": "发生反转",
+                "reader_payoff": "产生回报",
+                "candidate_directions": candidates,
+                "chapter_plans": [{
+                    "chapter_index": 2,
+                    "function": "冲突",
+                    "plot_engine": "目标冲突",
+                    "dramatic_turn": "出现麻烦",
+                    "reader_payoff": "产生变化",
+                    "scene_execution": {},
+                }],
+            },
+            {"primary_genre": "现实题材", "primary_reader_promise": "人物成长"},
+        )
+
+        self.assertFalse(report["passed"])
+        self.assertEqual(report["complete_scene_execution_count"], 0)
+
+    def test_type_quality_gate_rejects_consecutive_auxiliary_topic_dominance(self):
+        candidates = [
+            {
+                "plot_engine": engine,
+                "primary_promise_served": "兑现都市喜剧",
+                "secondary_element_role": "只提供一次压力",
+                "dramatic_escalation": "人物行动造成后果",
+                "reader_payoff": "关系和局势同时变化",
+            }
+            for engine in ("目标冲突", "关系变化", "信息反转", "限时选择")
+        ]
+        chapters = [
+            {
+                "chapter_index": index,
+                "function": "冲突",
+                "plot_engine": "关系变化",
+                "dramatic_turn": "主动选择带来反转",
+                "reader_payoff": "两人关系变化",
+                "core_event": core_event,
+                "secondary_element_role": role,
+                "comedy_beats": ["铺垫与后果"] * 4,
+            }
+            for index, core_event, role in (
+                (1, "用产品思维和用户需求分析分手", "产品经理方案制造笑点"),
+                (2, "用SWOT和产品方案说服对方", "职业能力继续主导对话"),
+            )
+        ]
+        report = _event_plan_quality_report(
+            {
+                "genre_alignment": "都市喜剧",
+                "dramatic_escalation": "阻力升级",
+                "major_reversal": "新信息改变判断",
+                "reader_payoff": "关系推进",
+                "candidate_directions": candidates,
+                "chapter_plans": chapters,
+            },
+            {
+                "primary_genre": "高密度都市轻喜剧",
+                "primary_reader_promise": "原创笑点和关系推进",
+                "supporting_element_policy": "职业和技术只作辅助，不能连续主导",
+            },
+        )
+
+        self.assertFalse(report["passed"])
+        self.assertFalse(report["auxiliary_dominance"]["passed"])
+        self.assertEqual(
+            report["auxiliary_dominance"]["violations"][0]["chapter_indexes"],
+            [1, 2],
+        )
+
+    def test_auxiliary_keyword_scan_ignores_fields_that_explain_background_role(self):
+        report = _auxiliary_dominance_report(
+            [
+                {
+                    "chapter_index": index,
+                    "plot_engine": "关系攻防",
+                    "core_event": "两个人因误解互相试探，最后被迫共同承担后果",
+                    "dramatic_turn": "一句答非所问的话暴露了真实立场",
+                    "state_change": "双方从互相防备转为暂时结盟",
+                    "reader_payoff": "关系推进并产生新的共同秘密",
+                    "ending_hook": "门外突然出现了不该出现的人",
+                    "secondary_element_role": "租房协议和物业登记只作背景压力",
+                    "compressed_processes": ["合同、押金、核验手续全部一笔带过"],
+                }
+                for index in (2, 3)
+            ],
+            {
+                "primary_genre": "都市轻喜剧",
+                "supporting_element_policy": "租房手续只作辅助，不能连续主导",
+            },
+        )
+
+        self.assertTrue(report["passed"])
+        self.assertEqual(report["violations"], [])
+
+    def test_semantic_review_can_clear_keyword_suspicion_without_user_warning(self):
+        quality_report = {
+            "status": "failed",
+            "passed": False,
+            "candidate_count": 4,
+            "complete_candidate_count": 4,
+            "unique_plot_engine_count": 4,
+            "chapter_count": 2,
+            "complete_chapter_count": 2,
+            "complete_scene_execution_count": 2,
+            "event_fields_complete": True,
+            "comedy_delivery_passed": True,
+            "first_chapter_hook_passed": True,
+            "auxiliary_dominance": {
+                "passed": False,
+                "violations": [
+                    {"topic": "housing_administration", "chapter_indexes": [2, 3]}
+                ],
+            },
+        }
+
+        updated = _mark_auxiliary_semantically_passed(
+            quality_report,
+            {"dominant_chapter_indexes": [], "assessments": []},
+        )
+
+        self.assertTrue(updated["passed"])
+        self.assertEqual(updated["status"], "passed")
+        self.assertEqual(updated["auxiliary_dominance"]["violations"], [])
+        self.assertEqual(
+            updated["auxiliary_dominance"]["keyword_violations"][0]["chapter_indexes"],
+            [2, 3],
+        )
+
+    def test_semantic_review_repairs_the_whole_consecutive_suspect_group(self):
+        targets = _semantic_auxiliary_targets(
+            {"dominant_chapter_indexes": [2], "assessments": []},
+            {
+                "auxiliary_dominance": {
+                    "violations": [
+                        {"topic": "housing_administration", "chapter_indexes": [2, 3]},
+                        {"topic": "career_technology", "chapter_indexes": [7, 8]},
+                    ]
+                }
+            },
+        )
+
+        self.assertEqual(targets, [2, 3])
+
+    def test_targeted_repair_preserves_good_chapters_and_requires_new_plot_engine(self):
+        original = {
+            "chapter_plans": [
+                {"chapter_index": 1, "plot_engine": "目标冲突", "core_event": "保留原章"},
+                {"chapter_index": 2, "plot_engine": "关系攻防", "core_event": "问题原章"},
+            ]
+        }
+        replacement = {
+            "chapter_index": 2,
+            "plot_engine": "信息反转",
+            "core_event": "一句误会迫使两人共同对外撒谎",
+            "state_change": "两人从各自撇清变为临时共谋",
+            "dramatic_turn": "第三人拿出与双方说法矛盾的证据",
+            "reader_payoff": "关系被迫升级，谎言产生即时后果",
+            "ending_hook": "真正知情的人发来一条语音",
+            "comedy_beats": ["误会", "嘴硬", "错位", "回旋镖"],
+            "scene_execution": _complete_scene_execution(),
+        }
+
+        merged, validation = _merge_chapter_plan_replacements(
+            original,
+            {"chapter_plan_replacements": [replacement]},
+            [2],
+        )
+
+        self.assertTrue(validation["passed"])
+        self.assertEqual(merged["chapter_plans"][0], original["chapter_plans"][0])
+        self.assertEqual(merged["chapter_plans"][1]["plot_engine"], "信息反转")
+
+        unchanged, rejected = _merge_chapter_plan_replacements(
+            original,
+            {
+                "chapter_plan_replacements": [
+                    {**replacement, "plot_engine": "关系攻防"}
+                ]
+            },
+            [2],
+        )
+        self.assertFalse(rejected["passed"])
+        self.assertEqual(rejected["unchanged_plot_engine_indexes"], [2])
+        self.assertEqual(unchanged, original)
+
+    def test_scene_orchestration_only_replaces_execution_fields(self):
+        original = {
+            "event_title": "测试事件",
+            "chapter_plans": [
+                {
+                    "chapter_index": 1,
+                    "core_event": "不可改写的宏观事件",
+                    "plot_engine": "目标冲突",
+                    "scene_execution": _complete_scene_execution(),
+                    "comedy_beats": ["原节拍"],
+                }
+            ],
+        }
+        replacement_scene = _complete_scene_execution()
+        replacement_scene["pov_reaction_chain"]["biased_interpretation"] = (
+            "主角误以为对方在赶他走"
+        )
+
+        merged, validation = _merge_scene_orchestration(
+            original,
+            {
+                "chapter_scene_directions": [
+                    {
+                        "chapter_index": 1,
+                        "core_event": "模型试图越界改写",
+                        "scene_execution": replacement_scene,
+                        "comedy_beats": ["误读", "嘴硬", "反击", "回旋镖"],
+                    }
+                ]
+            },
+        )
+
+        self.assertTrue(validation["passed"])
+        self.assertEqual(
+            merged["chapter_plans"][0]["core_event"],
+            "不可改写的宏观事件",
+        )
+        self.assertEqual(
+            merged["chapter_plans"][0]["scene_execution"]["pov_reaction_chain"]["biased_interpretation"],
+            "主角误以为对方在赶他走",
+        )
+        self.assertEqual(len(merged["chapter_plans"][0]["comedy_beats"]), 4)
+
+    def test_type_quality_gate_rejects_setup_only_first_chapter(self):
+        candidates = [
+            {
+                "plot_engine": engine,
+                "primary_promise_served": "类型承诺",
+                "secondary_element_role": "只作辅助",
+                "dramatic_escalation": "阻力升级",
+                "reader_payoff": "局势变化",
+            }
+            for engine in ("目标冲突", "关系变化", "信息反转", "限时选择")
+        ]
+        report = _event_plan_quality_report(
+            {
+                "genre_alignment": "类型一致",
+                "dramatic_escalation": "阻力升级",
+                "major_reversal": "发生反转",
+                "reader_payoff": "产生回报",
+                "candidate_directions": candidates,
+                "chapter_plans": [{
+                    "chapter_index": 1,
+                    "function": "铺垫",
+                    "plot_engine": "目标冲突",
+                    "dramatic_turn": "出现麻烦",
+                    "reader_payoff": "产生变化",
+                }],
+            },
+            {"primary_genre": "现实题材", "primary_reader_promise": "人物成长"},
+        )
+
+        self.assertFalse(report["first_chapter_hook_passed"])
+        self.assertFalse(report["passed"])
 
     def test_simulation_fallback_is_genre_adaptive_not_book_specific(self):
         novel = SimpleNamespace(

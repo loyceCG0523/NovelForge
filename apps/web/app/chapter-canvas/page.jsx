@@ -81,7 +81,6 @@ function ChapterCanvasContent() {
   return (
     <AppShell
       title="章节画布"
-      subtitle="专注阅读每一章生成结果，检查正文、摘要和上下文状态"
       actions={
         <>
           <select className="secondary-button" value={selectedNovelId} onChange={(event) => setSelectedNovelId(event.target.value)}>
