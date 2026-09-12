@@ -6,15 +6,16 @@ import { useEffect, useRef, useState } from "react";
 
 import { apiFetch, clearSession, getStoredUser, getToken, setStoredUser } from "@/lib/api";
 import { applyTheme, getPreferredTheme } from "@/lib/themes";
+import NavIcon from "@/components/NavIcon";
 
 // 主导航只保留真正的产品功能；创作过程状态放到工作台内部展示。
 const navItems = [
-  { href: "/workbench", label: "创作工作台", icon: "□" },
-  { href: "/story-events", label: "剧情事件", icon: "▥" },
-  { href: "/chapters", label: "章节管理", icon: "▤" },
-  { href: "/projects", label: "作品管理", icon: "▦" },
-  { href: "/research", label: "资料检索", icon: "⌕" },
-  { href: "/meme-library", label: "热梗库", icon: "◇" }
+  { href: "/workbench", label: "创作工作台", icon: "pen" },
+  { href: "/story-events", label: "剧情事件", icon: "clapperboard" },
+  { href: "/chapters", label: "章节管理", icon: "bookOpen" },
+  { href: "/projects", label: "作品管理", icon: "library" },
+  { href: "/research", label: "资料检索", icon: "search" },
+  { href: "/meme-library", label: "热梗库", icon: "flame" }
 ];
 
 const AVATAR_CROP_SIZE = 220;
@@ -223,7 +224,7 @@ export default function AppShell({ title, actions, children }) {
         <nav className="nav">
           {navItems.map((item) => (
             <Link key={item.href} className={`nav-item ${pathname === item.href ? "active" : ""}`} href={item.href}>
-              <span className="nav-icon">{item.icon}</span>
+              <span className="nav-icon"><NavIcon name={item.icon} /></span>
               <span className="nav-label">{item.label}</span>
             </Link>
           ))}

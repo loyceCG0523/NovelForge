@@ -547,6 +547,12 @@ select.secondary-button:disabled,
   color: #ffffff;
 }
 
+.nav-icon svg {
+  width: 19px;
+  height: 19px;
+  display: block;
+}
+
 .nav-label {
   white-space: nowrap;
 }
