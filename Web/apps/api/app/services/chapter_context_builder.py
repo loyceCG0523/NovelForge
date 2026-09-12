@@ -18,7 +18,6 @@ from app.models.review_issue import ReviewIssue
 from app.models.research_source import ResearchSource
 from app.services.agents.story_planning_agent import get_story_bible_context
 from app.services.memory_extractor import build_consolidated_memory_context
-from app.services.story_bible_builder import get_sample_style_reference_context
 from app.services.tavily_search import is_allowed_research_source
 from app.services.timeline_service import get_timeline_context
 
@@ -126,8 +125,7 @@ def build_chapter_context(
         .limit(30)
     ).all()
 
-    # 样本分析只提供可迁移工程特征，不提供原文内容；优先读取作品管理中显式选择的参考样本。
-    sample_style_references = get_sample_style_reference_context(db, novel)
+    # 研究资料进入生成上下文，便于模型在写作前对齐时代与题材事实。
     has_event_research_scope = bool(task_input and "research_source_ids" in task_input)
     requested_research_ids = (task_input or {}).get("research_source_ids") or []
     valid_research_ids = []
@@ -182,7 +180,6 @@ def build_chapter_context(
         "timeline_entries": timeline_entries,
         "foreshadowing": [_foreshadowing_to_context(item) for item in active_foreshadowing],
         "review_issues": [_review_issue_to_context(issue) for issue in active_review_issues],
-        "sample_style_references": sample_style_references,
         "research_sources": [
             {
                 "query": item.query,
@@ -216,7 +213,6 @@ def build_chapter_context(
             "merged_memory_count": len(merged_memories),
             "foreshadowing_count": len(active_foreshadowing),
             "open_review_issue_count": len(active_review_issues),
-            "sample_analysis_count": len(sample_style_references),
             "research_source_count": len(research_sources),
             "timeline_entry_count": len(timeline_entries),
         },

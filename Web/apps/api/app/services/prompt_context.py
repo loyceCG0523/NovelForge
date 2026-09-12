@@ -51,8 +51,7 @@ def compact_story_bible(story_bible: dict[str, Any] | None) -> dict[str, Any]:
         ]
     style_rules = dict(content.get("style_rules") or {})
     style_rules.pop("sample_style_references", None)
-    if isinstance(style_rules.get("sample_style_rules"), list):
-        style_rules["sample_style_rules"] = style_rules["sample_style_rules"][:6]
+    style_rules.pop("sample_style_rules", None)
     if style_rules:
         content["style_rules"] = style_rules
     return {
@@ -84,59 +83,6 @@ def compact_recent_chapters(chapters: list[dict[str, Any]] | None) -> list[dict[
             }
         )
     return compacted
-
-
-def _compact_expression_experience(value: Any) -> dict[str, Any]:
-    value = value if isinstance(value, dict) else {}
-    return {
-        "title": str(value.get("title") or "")[:160],
-        "category": str(value.get("category") or "")[:80],
-        "original_excerpt": str(value.get("original_excerpt") or "")[:220],
-        "context": str(value.get("context") or "")[:500],
-        "relationship": str(value.get("relationship") or "")[:300],
-        "emotion": str(value.get("emotion") or "")[:200],
-        "speech_act": str(value.get("speech_act") or "")[:200],
-        "response_pattern": str(value.get("response_pattern") or "")[:500],
-        "why_effective": str(value.get("why_effective") or "")[:600],
-        "transferable_technique": str(
-            value.get("transferable_technique") or ""
-        )[:700],
-        "usage_boundary": str(value.get("usage_boundary") or "")[:500],
-        "applicable_scenes": [
-            str(item)[:120]
-            for item in (value.get("applicable_scenes") or [])[:8]
-        ],
-    }
-
-
-def compact_expression_reference_pack(reference_pack: dict[str, Any] | None) -> dict[str, Any]:
-    """只把本章最相关的少量表达经验卡送入模型。"""
-    reference_pack = reference_pack or {}
-    minimum_required = max(1, int(reference_pack.get("minimum_required") or 1))
-    return {
-        "status": reference_pack.get("status", "skipped"),
-        "minimum_required": minimum_required,
-        "requirement_satisfied": (
-            len(reference_pack.get("references") or []) >= minimum_required
-        ),
-        "usage_policy": {
-            "required": "本章写作前必须阅读并迁移至少一条参考中的表达或叙事机制",
-            "allowed": "优先阅读高分原文亮点片段，学习真实人物如何称呼、试探、回避、打断、答非所问和短促补刀；缺乏独创性的通用短语可直接使用",
-            "forbidden": "不得复制或近似改写具有辨识度的完整包袱、连续对话、专名、人物关系、情节或同一比喻载体",
-        },
-        "references": [
-              {
-                  "reference_id": item.get("annotation_id") or item.get("passage_id", ""),
-                  "passage_type": item.get("passage_type", ""),
-                  "excerpt": item.get("excerpt", ""),
-                  "technique": item.get("technique", ""),
-                  "experience": _compact_expression_experience(
-                      item.get("experience")
-                  ),
-              }
-            for item in (reference_pack.get("references") or [])[:10]
-        ],
-    }
 
 
 def compact_meme_reference_pack(reference_pack: dict[str, Any] | None) -> dict[str, Any]:

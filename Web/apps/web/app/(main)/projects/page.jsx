@@ -23,7 +23,6 @@ const defaultBrief = {
   style_reference: "",
   forbidden_content: "",
   automation_strategy: "",
-  sample_reference_ids: [],
   characters: [],
   planned_events: []
 };
@@ -142,7 +141,6 @@ function projectToForm(project) {
     style_reference: brief.style_reference || "",
     forbidden_content: brief.forbidden_content || "",
     automation_strategy: brief.automation_strategy || "",
-    sample_reference_ids: Array.isArray(brief.sample_reference_ids) ? brief.sample_reference_ids : [],
     characters,
     planned_events: plannedEvents
   };
@@ -365,9 +363,8 @@ export default function ProjectsPage() {
   const requirementImportInputRef = useRef(null);
   const createRequirementImportInputRef = useRef(null);
   const [selectedProjectId, setSelectedProjectId] = useState("");
-  // 作品列表/样本库/作品圣经走 SWR 缓存：切回页面秒显缓存，后台静默刷新。
+  // 作品列表/作品圣经走 SWR 缓存：切回页面秒显缓存，后台静默刷新。
   const { data: projects = [], mutate: mutateProjects } = useSWR("/api/novels");
-  const { data: sampleLibrary = [] } = useSWR("/api/sample-analyses/library");
   const [projectMenuOpen, setProjectMenuOpen] = useState(false);
   const [briefForm, setBriefForm] = useState(projectToForm(null));
   const [createForm, setCreateForm] = useState(emptyProjectForm);
@@ -808,7 +805,7 @@ export default function ProjectsPage() {
               {!selectedProject ? (
                 <EmptyState title="尚未选择作品" description="从左侧选择作品，或点击右上角新建作品。" />
               ) : (
-                <BriefForm form={briefForm} onChange={updateBriefForm} sampleLibrary={sampleLibrary} />
+                <BriefForm form={briefForm} onChange={updateBriefForm} />
               )}
             </div>
           </section>
@@ -888,7 +885,7 @@ export default function ProjectsPage() {
             {createDocMessage ? <div className="success-box">{createDocMessage}</div> : null}
             {createError ? <div className="error-box">{createError}</div> : null}
             <div className="create-project-body">
-              <BriefForm form={createForm} onChange={updateCreateForm} sampleLibrary={sampleLibrary} />
+              <BriefForm form={createForm} onChange={updateCreateForm} />
             </div>
             <div className="inline-actions dialog-actions">
               <button type="button" className="secondary-button" onClick={() => setShowCreateDialog(false)}>取消</button>
@@ -967,16 +964,8 @@ export default function ProjectsPage() {
   );
 }
 
-function BriefForm({ form, onChange, sampleLibrary = [] }) {
-  const selectedSampleIds = Array.isArray(form.sample_reference_ids) ? form.sample_reference_ids : [];
+function BriefForm({ form, onChange }) {
   const characters = Array.isArray(form.characters) ? form.characters : [];
-
-  function toggleSampleReference(sampleId) {
-    const nextIds = selectedSampleIds.includes(sampleId)
-      ? selectedSampleIds.filter((id) => id !== sampleId)
-      : [...selectedSampleIds, sampleId];
-    onChange("sample_reference_ids", nextIds);
-  }
 
   function updateCharacter(characterKey, field, value) {
     onChange("characters", characters.map((item) => (
@@ -1070,65 +1059,6 @@ function BriefForm({ form, onChange, sampleLibrary = [] }) {
       <section className="brief-section">
         <div className="brief-section-head">
           <span>04</span>
-          <div>
-            <h3>参考样本</h3>
-            <p>选择优秀作品样本，用于扩展剧情设计方向，并检索生活化语言表达。</p>
-          </div>
-        </div>
-        {sampleLibrary.length === 0 ? (
-          <div className="empty-inline">
-            <h2>暂无可用样本</h2>
-            <p>先到“样本协作”上传并完成分析，之后就可以在这里选择私人样本；可信公共标注会自动参与检索。</p>
-          </div>
-        ) : (
-          <div className="sample-reference-grid">
-            {sampleLibrary.map((sample) => {
-              const selected = selectedSampleIds.includes(sample.id);
-              const indexStats = sample.annotation_index || {};
-              const indexedCount = Number(indexStats.indexed_count || 0);
-              const pendingIndexCount = Number(indexStats.pending_index_count || 0);
-              const indexBadge = (() => {
-                switch (indexStats.status) {
-                  case "ready":
-                    return { className: "purple", label: `${indexedCount} 条标注可检索`, title: "这些可信人工标注已经建立向量，可在章节生成前被召回。" };
-                  case "partial":
-                    return { className: "yellow", label: `${indexedCount} 条可检索 · ${pendingIndexCount} 条待索引`, title: "已有标注可用于创作，另有可信标注尚未完成向量索引。" };
-                  case "pending_index":
-                    return { className: "yellow", label: `${pendingIndexCount} 条标注待索引`, title: "标注已经可信，但尚未生成可供检索的向量。" };
-                  case "pending_review":
-                    return { className: "yellow", label: `${Number(indexStats.pending_review_count || 0)} 条标注待审核`, title: "公共标注通过社区可信审核后才会建立索引。" };
-                  case "no_trusted_annotations":
-                    return { className: "red", label: "暂无可信标注", title: "现有标注未达到可信条件，暂时不会参与创作。" };
-                  default:
-                    return { className: "yellow", label: "待标注", title: "请在样本协作页选择优秀片段并添加人工标注。" };
-                }
-              })();
-              return (
-                <button
-                  className={`sample-reference-card ${selected ? "active" : ""}`}
-                  type="button"
-                  key={sample.id}
-                  onClick={() => toggleSampleReference(sample.id)}
-                >
-                  <span className={`sample-check ${selected ? "active" : ""}`}>{selected ? "已选" : "选择"}</span>
-                  <strong>{sample.sample_title}</strong>
-                  <em>{sample.source_novel_title || "样本库"} · {sample.source_genre || "未标注题材"}</em>
-                  <p>{sample.summary || "已建立剧情与表达经验双通道 RAG 索引。"}</p>
-                  <div className="memory-tags">
-                    {sample.source_word_count ? <span className="tag">{Number(sample.source_word_count).toLocaleString()} 字</span> : null}
-                    {sample.chunk_count ? <span className="tag green">分片 {sample.chunk_count}</span> : null}
-                    <span className={`tag ${indexBadge.className}`} title={indexBadge.title}>{indexBadge.label}</span>
-                  </div>
-                </button>
-              );
-            })}
-          </div>
-        )}
-      </section>
-
-      <section className="brief-section">
-        <div className="brief-section-head">
-          <span>05</span>
           <div>
             <h3>写作边界</h3>
             <p>控制风格、禁区和自动推进方式。</p>

@@ -14,8 +14,7 @@ const navItems = [
   { href: "/chapters", label: "章节管理", icon: "▤" },
   { href: "/projects", label: "作品管理", icon: "▦" },
   { href: "/research", label: "资料检索", icon: "⌕" },
-  { href: "/meme-library", label: "热梗库", icon: "◇" },
-  { href: "/sample-analysis", label: "样本协作", icon: "▧" }
+  { href: "/meme-library", label: "热梗库", icon: "◇" }
 ];
 
 const AVATAR_CROP_SIZE = 220;

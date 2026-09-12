@@ -3,7 +3,6 @@ import unittest
 from types import SimpleNamespace
 
 from app.services.prompt_context import (
-    compact_expression_reference_pack,
     compact_recent_chapters,
     compact_review_issues,
     compact_story_bible,
@@ -14,36 +13,23 @@ from app.services.story_bible_builder import build_story_bible_prompt
 
 
 class PromptContextTests(unittest.TestCase):
-    def test_sample_context_drops_retrieval_query_and_legacy_report(self):
-        expression_pack = compact_expression_reference_pack(
-            {
-                "status": "completed",
-                "query": "只用于向量检索，不应进入章节模型" * 100,
-                "references": [
-                    {"passage_id": str(index), "passage_type": "dialogue", "excerpt": f"片段{index}"}
-                    for index in range(12)
-                ],
-            }
-        )
-        self.assertEqual(expression_pack["minimum_required"], 1)
-        self.assertTrue(expression_pack["requirement_satisfied"])
-        self.assertIn("至少一条", expression_pack["usage_policy"]["required"])
+    def test_legacy_sample_fields_dropped_from_style_rules(self):
         story_bible = compact_story_bible(
             {
                 "content": {
                     "style_rules": {
                         "sample_style_references": [{"full_report": "旧报告" * 100}],
                         "sample_style_rules": [f"短规则{index}" for index in range(10)],
+                        "style_reference": "克制",
                     }
                 }
             }
         )
 
-        self.assertNotIn("query", expression_pack)
-        self.assertEqual(len(expression_pack["references"]), 10)
         rules = story_bible["content"]["style_rules"]
         self.assertNotIn("sample_style_references", rules)
-        self.assertEqual(len(rules["sample_style_rules"]), 6)
+        self.assertNotIn("sample_style_rules", rules)
+        self.assertEqual(rules["style_reference"], "克制")
 
     def test_only_latest_chapter_keeps_full_content(self):
         old_content = "旧章开头" + ("旧" * 1200) + "旧章结尾"
@@ -157,7 +143,6 @@ class PromptContextTests(unittest.TestCase):
             "timeline_entries": [],
             "foreshadowing": [],
             "review_issues": [],
-            "sample_style_references": [],
             "research_sources": [],
         }
 
@@ -281,46 +266,6 @@ class PromptContextTests(unittest.TestCase):
         self.assertNotIn("不应逐章重复的全量阶段", combined_prompt)
         self.assertNotIn("不需要重复的整书摘要", combined_prompt)
         self.assertEqual(combined_prompt.count("从旧城出发"), 1)
-
-    def test_chapter_prompt_includes_expression_excerpts_and_copy_policy(self):
-        context = {
-            "novel": {"title": "测试书", "genre": "现实", "premise": "生存", "brief": {}},
-            "story_bible": {},
-            "target": {"chapter_index": 2, "task_input": {}},
-            "constraints": {"chapter_word_range": {"min": 2200, "max": 2600}},
-            "generation_guidance": {
-                "chapter_goal": "雨夜对峙",
-                "chapter_word_range": {"min": 2200, "max": 2600},
-                "continuity_reminders": [],
-                "anti_ai_reminders": [],
-            },
-            "recent_chapters": [],
-            "memories": [],
-            "foreshadowing": [],
-            "review_issues": [],
-            "expression_reference_pack": {
-                "status": "completed",
-                "query": "雨夜对峙",
-                "references": [
-                    {
-                        "passage_id": "p1",
-                        "passage_type": "metaphor",
-                        "excerpt": "雨水敲着铁皮棚，像有人在门外数一笔旧账。",
-                        "technique": "用声音意象把环境压力转成人物心理压力",
-                    }
-                ],
-            },
-        }
-
-        combined_prompt = "\n".join(
-            message["content"] for message in build_chapter_prompt(context)
-        )
-
-        self.assertIn("雨水敲着铁皮棚", combined_prompt)
-        self.assertIn("用声音意象", combined_prompt)
-        self.assertIn("通用短语可以直接使用", combined_prompt)
-        self.assertIn("禁止近似改写原句", combined_prompt)
-
 
 if __name__ == "__main__":
     unittest.main()

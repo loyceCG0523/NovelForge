@@ -12,7 +12,6 @@ from app.services.llm_client import LLMConfig
 from app.services.story_bible_builder import (
     generate_story_bible_content,
     get_or_build_story_bible_context,
-    get_sample_style_reference_context,
     upsert_story_bible,
 )
 
@@ -27,12 +26,10 @@ def build_or_refresh_story_bible(
     extra_input: dict[str, Any] | None = None,
 ) -> tuple[StoryBible, str]:
     """生成或刷新作品圣经，并返回生成模式。"""
-    sample_style_references = get_sample_style_reference_context(db, novel)
     content, generation_mode = generate_story_bible_content(
         novel=novel,
         llm_config=llm_config,
         extra_input=extra_input,
-        sample_style_references=sample_style_references,
     )
     story_bible = upsert_story_bible(
         db=db,

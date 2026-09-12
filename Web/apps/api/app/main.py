@@ -17,9 +17,6 @@ from app.api.meme_library import router as meme_library_router
 from app.api.novels import router as novels_router
 from app.api.reviews import router as reviews_router
 from app.api.research import router as research_router
-from app.api.sample_analyses import library_router as sample_analyses_library_router
-from app.api.sample_analyses import router as sample_analyses_router
-from app.api.sample_collaboration import router as sample_collaboration_router
 from app.api.story_bibles import router as story_bibles_router
 from app.api.story_events import router as story_events_router
 from app.api.tasks import router as tasks_router
@@ -52,9 +49,6 @@ app.include_router(meme_library_router)
 app.include_router(foreshadowing_router)
 app.include_router(reviews_router)
 app.include_router(research_router)
-app.include_router(sample_analyses_library_router)
-app.include_router(sample_analyses_router)
-app.include_router(sample_collaboration_router)
 app.include_router(story_bibles_router)
 app.include_router(story_events_router)
 app.include_router(tasks_router)

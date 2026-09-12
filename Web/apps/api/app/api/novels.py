@@ -8,7 +8,7 @@ import re
 from urllib.parse import quote
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
-from sqlalchemy import delete, select, update
+from sqlalchemy import delete, select
 from sqlalchemy.orm import Session
 
 from app.api.dependencies import get_owned_novel
@@ -23,7 +23,6 @@ from app.models.memory_item import MemoryItem
 from app.models.novel import Novel
 from app.models.research_source import ResearchSource
 from app.models.review_issue import ReviewIssue
-from app.models.sample_analysis import SampleAnalysis
 from app.models.story_bible import StoryBible
 from app.models.story_event import StoryEvent
 from app.models.timeline_entry import TimelineEntry
@@ -215,17 +214,12 @@ def _validate_delete_confirmation(payload: NovelDeleteConfirm) -> None:
 
 
 def _delete_novel_graph(db: Session, novel: Novel) -> None:
-    """按外键依赖顺序删除作品派生内容，保留可复用样本分析资产。"""
+    """按外键依赖顺序删除作品派生内容。"""
     db.execute(delete(AutoNovelRun).where(AutoNovelRun.novel_id == novel.id))
     db.execute(delete(ResearchSource).where(ResearchSource.novel_id == novel.id))
     db.execute(delete(TimelineEntry).where(TimelineEntry.novel_id == novel.id))
     db.execute(delete(EventChapterPlan).where(EventChapterPlan.novel_id == novel.id))
     db.execute(delete(ReviewIssue).where(ReviewIssue.novel_id == novel.id))
-    db.execute(
-        update(SampleAnalysis)
-        .where(SampleAnalysis.novel_id == novel.id)
-        .values(novel_id=None, task_id=None)
-    )
     db.execute(delete(StoryEvent).where(StoryEvent.novel_id == novel.id))
     db.execute(delete(MemoryItem).where(MemoryItem.novel_id == novel.id))
     db.execute(delete(Foreshadowing).where(Foreshadowing.novel_id == novel.id))

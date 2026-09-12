@@ -33,10 +33,6 @@ from app.services.llm_client import LLMClient, LLMConfig, LLMRequestCancelledErr
 from app.services.paragraph_formatter import format_chapter_paragraphs
 from app.services.prompt_builder import build_chapter_prompt
 from app.services.reference_overlap_guard import build_reference_overlap_report
-from app.services.sample_rag import (
-    ChapterReferenceRequirementError,
-    build_chapter_reference_pack,
-)
 from app.services.meme_rag import (
     build_chapter_meme_pack,
     build_final_meme_usage,
@@ -297,23 +293,6 @@ def run_chapter_pipeline(
         target_chapter_index=request.target_chapter_index,
         task_input=request.task_input,
     )
-    try:
-        reference_pack = build_chapter_reference_pack(
-            db,
-            novel=novel,
-            context=context,
-        )
-    except LLMRequestCancelledError:
-        raise
-    except ChapterReferenceRequirementError:
-        db.rollback()
-        raise
-    except Exception as exc:
-        db.rollback()
-        raise ChapterReferenceRequirementError(
-            f"本章样本参考检索失败，已停止正文生成：{exc}"
-        ) from exc
-    context = {**context, "expression_reference_pack": reference_pack}
     try:
         meme_reference_pack = build_chapter_meme_pack(
             db,

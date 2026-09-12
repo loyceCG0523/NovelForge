@@ -5,13 +5,11 @@
 
 import json
 from typing import Any
-from uuid import UUID
 
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.models.novel import Novel
-from app.models.sample_analysis import SampleAnalysis
 from app.models.story_bible import StoryBible
 from app.services.llm_client import LLMClient, LLMConfig
 from app.services.pacing_plan import build_default_pacing_plan, normalize_pacing_plan
@@ -81,14 +79,12 @@ def build_fallback_narrative_contract(novel: Novel, brief: dict[str, Any]) -> di
     }
 
 
-def build_fallback_story_bible(novel: Novel, sample_style_references: list[dict[str, Any]] | None = None) -> dict[str, Any]:
+def build_fallback_story_bible(novel: Novel) -> dict[str, Any]:
     """没有 LLM 配置时，根据起始需求生成保守可用的作品圣经草案。"""
     brief = novel.brief or {}
     structured_characters = _normalize_brief_characters(brief)
     protagonist_record = next((item for item in structured_characters if item.get("is_protagonist")), None)
     protagonist = (protagonist_record or {}).get("name") or brief.get("protagonist") or "主角"
-    sample_style_references = sample_style_references or []
-    sample_style_rules = _build_sample_style_rules(sample_style_references)
     return {
         "schema_version": STORY_BIBLE_SCHEMA_VERSION,
         "positioning": {
@@ -134,7 +130,6 @@ def build_fallback_story_bible(novel: Novel, sample_style_references: list[dict[
         "style_rules": {
             "style_reference": brief.get("style_reference") or "具体、克制、重行动和场景细节",
             "tone_pacing_contract": build_tone_pacing_contract(novel.genre, brief),
-            "sample_style_rules": sample_style_rules,
             "anti_ai_rules": [
                 "避免模板化转折句",
                 "避免空泛情绪词",
@@ -155,13 +150,11 @@ def build_fallback_story_bible(novel: Novel, sample_style_references: list[dict[
 def build_story_bible_prompt(
     novel: Novel,
     extra_input: dict | None = None,
-    sample_style_references: list[dict[str, Any]] | None = None,
 ) -> list[dict[str, str]]:
     """构建作品圣经生成 Prompt，要求模型只返回 JSON。"""
     brief = novel.brief or {}
-    sample_style_references = sample_style_references or []
     required_schema = _schema_outline(
-        build_fallback_story_bible(novel, sample_style_references)
+        build_fallback_story_bible(novel)
     )
     # 详细节奏默认值由 normalize_pacing_plan 统一补齐，避免把机械字段重复塞给模型。
     required_schema["pacing_plan"] = {
@@ -177,12 +170,6 @@ def build_story_bible_prompt(
             "target_words": novel.target_words,
             "premise": novel.premise,
             "brief": brief,
-        },
-        "sample_style_references": sample_style_references,
-        "sample_reference_policy": {
-            "priority": "supporting",
-            "usage": "只把样本短规则用于语言表达；剧情和原文表达由后续 RAG 按当前场景检索。",
-            "forbidden": "不得复制样本人物、剧情、设定名词或原文表达。",
         },
         "extra_input": extra_input or {},
         "required_schema": required_schema,
@@ -201,7 +188,7 @@ def build_story_bible_prompt(
             "role": "user",
             "content": "\n".join(
                 [
-                    "生成可直接约束自动创作的作品圣经。样本只沉淀少量可执行语言规则，不推导句长、节奏或伏笔指标。",
+                    "生成可直接约束自动创作的作品圣经。规则只保留可执行条款，不推导句长、节奏或伏笔指标。",
                     "人物覆盖身份、阶段、性格、背景、目标、缺陷和成长线；普通事件不算人物设定，brief.characters 不得删并或改关键事实。",
                     "story_era 写入 world_rules，明确时代可用/不可用的科技、制度、职业、交通、通信和生活细节。",
                     "事件由 premise、plot_direction、人物目标和关系自动规划；所有规则必须具体可执行。",
@@ -219,10 +206,9 @@ def build_story_bible_prompt(
 def normalize_story_bible(
     raw: dict[str, Any],
     novel: Novel,
-    sample_style_references: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
     """清洗模型输出，保证关键结构总是存在。"""
-    fallback = build_fallback_story_bible(novel, sample_style_references)
+    fallback = build_fallback_story_bible(novel)
     normalized = {**fallback, **(raw or {})}
     for key, fallback_value in fallback.items():
         if not normalized.get(key):
@@ -316,20 +302,18 @@ def generate_story_bible_content(
     novel: Novel,
     llm_config: LLMConfig | None,
     extra_input: dict | None = None,
-    sample_style_references: list[dict[str, Any]] | None = None,
 ) -> tuple[dict[str, Any], str]:
     """生成作品圣经内容，返回内容和生成模式。"""
-    sample_style_references = sample_style_references or []
     if llm_config is None:
-        return build_fallback_story_bible(novel, sample_style_references), "fallback"
+        return build_fallback_story_bible(novel), "fallback"
 
     try:
         _, parsed = LLMClient(llm_config).complete_json(
-            build_story_bible_prompt(novel, extra_input, sample_style_references)
+            build_story_bible_prompt(novel, extra_input)
         )
-        return normalize_story_bible(parsed, novel, sample_style_references), "llm"
+        return normalize_story_bible(parsed, novel), "llm"
     except Exception as exc:
-        content = build_fallback_story_bible(novel, sample_style_references)
+        content = build_fallback_story_bible(novel)
         content["builder_error"] = str(exc)
         return content, "fallback_after_llm_error"
 
@@ -380,75 +364,6 @@ def get_or_build_story_bible_context(db: Session, novel: Novel) -> dict[str, Any
         "content": content,
         "locked_fields": story_bible.locked_fields or {},
     }
-
-
-def get_sample_style_reference_context(db: Session, novel: Novel, limit: int = 3) -> list[dict[str, Any]]:
-    """只暴露短语言原则；剧情和表达经验由双通道 RAG 独立检索。"""
-    selected_ids = _parse_sample_reference_ids((novel.brief or {}).get("sample_reference_ids"))
-    if selected_ids:
-        sample_analyses = db.scalars(
-            select(SampleAnalysis)
-            .where(
-                SampleAnalysis.owner_id == novel.owner_id,
-                SampleAnalysis.id.in_(selected_ids),
-                SampleAnalysis.status.in_(["completed", "active"]),
-            )
-            .order_by(SampleAnalysis.updated_at.desc())
-            .limit(limit)
-        ).all()
-    else:
-        sample_analyses = db.scalars(
-            select(SampleAnalysis)
-            .where(
-                SampleAnalysis.novel_id == novel.id,
-                SampleAnalysis.status.in_(["completed", "active"]),
-            )
-            .order_by(SampleAnalysis.updated_at.desc())
-            .limit(limit)
-        ).all()
-
-    references = []
-    for item in sample_analyses:
-        report = item.report or {}
-        profile = report.get("reference_profile") or {}
-        if not profile:
-            # 兼容 v3 历史报告，但只迁移少量可执行规则，绝不再透传整份量化数据。
-            strategy = report.get("llm_style_strategy") or {}
-            language_rules = [
-                *(strategy.get("dialogue_guidelines") or []),
-                *(strategy.get("generation_guidelines") or []),
-            ]
-            profile = {
-                "available": bool(strategy.get("available")),
-                "model": strategy.get("model", ""),
-                "overall_evaluation": strategy.get("style_summary", ""),
-                "language_principles": [str(value)[:220] for value in language_rules[:4]],
-                "avoid_errors": [
-                    str(value)[:220]
-                    for value in (strategy.get("anti_ai_guidelines") or [])[:3]
-                ],
-            }
-        references.append(
-            {
-                "id": str(item.id),
-                "sample_title": item.sample_title,
-                "reference_profile": profile,
-            }
-        )
-    return references
-
-
-def _parse_sample_reference_ids(value: Any) -> list[UUID]:
-    """从作品 brief 中解析用户选择的样本报告 ID。"""
-    if not isinstance(value, list):
-        return []
-    parsed = []
-    for item in value:
-        try:
-            parsed.append(UUID(str(item)))
-        except (TypeError, ValueError):
-            continue
-    return parsed
 
 
 def build_story_bible_summary(content: dict[str, Any], novel: Novel) -> str:
@@ -562,22 +477,6 @@ def _build_system_planned_events(
             "source": "system_generated",
         }
     ]
-
-
-def _build_sample_style_rules(sample_style_references: list[dict[str, Any]]) -> list[str]:
-    """把样本报告转成 fallback StoryBible 也能读取的短规则。"""
-    rules = []
-    for reference in sample_style_references[:3]:
-        profile = reference.get("reference_profile") or {}
-        for item in (
-            profile.get("language_principles") or profile.get("language_rules") or []
-        )[:2]:
-            rules.append(str(item)[:220])
-        for item in (
-            profile.get("avoid_errors") or profile.get("anti_ai_rules") or []
-        )[:1]:
-            rules.append(str(item)[:220])
-    return rules[:6]
 
 
 def _safe_int(value: Any, default: int) -> int:

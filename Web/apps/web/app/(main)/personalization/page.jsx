@@ -329,7 +329,7 @@ export default function PersonalizationPage() {
           <div className="settings-toggle-row">
             <div className="settings-toggle-copy">
               <strong>使用独立深度思考模型 API</strong>
-              <span>{form.review_llm_enabled ? "事件规划、质量审校和样本经验总结共用这套配置；正文生成使用下方 Flash 配置。" : "未启用时，以上分析任务会兼容复用正文模型。"}</span>
+              <span>{form.review_llm_enabled ? "事件规划和质量审校共用这套配置；正文生成使用下方 Flash 配置。" : "未启用时，以上分析任务会兼容复用正文模型。"}</span>
             </div>
             <label className="settings-switch">
               <input
@@ -411,8 +411,8 @@ export default function PersonalizationPage() {
             <div className="settings-subcard review-model-card">
               <div className="settings-subhead">
                 <div>
-                  <strong>事件规划、审校与样本分析模型 API（建议深度思考）</strong>
-                  <span>同一模型负责事件规划、逐章审校、事件总审和最多十路并行的样本经验总结。</span>
+                  <strong>事件规划与审校模型 API（建议深度思考）</strong>
+                  <span>同一模型负责事件规划、逐章审校和事件总审。</span>
                 </div>
                 <div className="settings-subhead-actions">
                   <span className={`tag ${reviewApiKeyConfigured ? "green" : "yellow"}`}>{reviewApiKeyConfigured ? "已配置" : "未配置"}</span>
@@ -478,7 +478,7 @@ export default function PersonalizationPage() {
       <section className="panel llm-only-panel">
         <div className="panel-header">
           <div>
-            <div className="panel-title">Qwen RAG（样本 + 热梗）</div>
+            <div className="panel-title">Qwen RAG（热梗）</div>
           </div>
           <span className={`tag ${form.embedding_enabled && embeddingApiKeyConfigured ? "green" : "yellow"}`}>
             {!form.embedding_enabled ? "未启用" : (embeddingApiKeyConfigured ? "已启用" : "待配置")}
@@ -487,10 +487,10 @@ export default function PersonalizationPage() {
         <div className="panel-body settings-stack">
           <div className="settings-toggle-row">
             <div className="settings-toggle-copy">
-              <strong>启用样本与热梗向量检索</strong>
+              <strong>启用热梗向量检索</strong>
               <span>
                 {form.embedding_enabled
-                  ? "样本剧情/表达经验、系统内置热梗和用户扩展热梗都会使用远程向量索引。"
+                  ? "系统内置热梗和用户扩展热梗都会使用远程向量索引。"
                   : "关闭后不会调用 Embedding API，也不会消耗向量额度。"}
               </span>
             </div>

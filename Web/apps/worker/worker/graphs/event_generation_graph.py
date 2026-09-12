@@ -59,7 +59,6 @@ from app.services.llm_client import (
 )
 from app.services.pacing_plan import NARRATIVE_CLOSING_EVENT_TYPES
 from app.services.prompt_context import compact_story_bible
-from app.services.sample_rag import build_plot_design_reference_pack
 from app.services.storytelling_craft import (
     build_scene_execution_schema,
     normalize_scene_execution,
@@ -93,7 +92,6 @@ class EventGenerationState(TypedDict, total=False):
     research_source_ids: list[str]
     research_summary: dict[str, Any]
     event_revision: dict[str, Any]
-    plot_reference_pack: dict[str, Any]
     _resume_node: str
 
 
@@ -951,41 +949,11 @@ def _merge_scene_orchestration(
     return {**event_plan, "chapter_plans": merged_plans}, validation
 
 
-def _compact_plot_experience(value: Any) -> dict[str, Any]:
-    value = value if isinstance(value, dict) else {}
-    return {
-        "title": str(value.get("title") or "")[:160],
-        "setup": str(value.get("setup") or "")[:500],
-        "trigger": str(value.get("trigger") or "")[:500],
-        "character_desire": str(value.get("character_desire") or "")[:500],
-        "conflict_and_escalation": str(
-            value.get("conflict_and_escalation") or ""
-        )[:800],
-        "character_choice": str(value.get("character_choice") or "")[:500],
-        "turn_or_reframe": str(value.get("turn_or_reframe") or "")[:500],
-        "payoff": str(value.get("payoff") or "")[:500],
-        "consequence": str(value.get("consequence") or "")[:500],
-        "why_effective": str(value.get("why_effective") or "")[:700],
-        "transferable_pattern": str(
-            value.get("transferable_pattern") or ""
-        )[:800],
-        "applicable_genres": [
-            str(item)[:120]
-            for item in (value.get("applicable_genres") or [])[:8]
-        ],
-        "applicable_scenes": [
-            str(item)[:120]
-            for item in (value.get("applicable_scenes") or [])[:8]
-        ],
-    }
-
-
 def _build_event_plan_prompt(novel: Novel, task_input: dict, chapter_count: int, start_index: int) -> list[dict[str, str]]:
     """构建事件规划 Prompt，只下发一份作品事实和当前阶段。"""
     story_bible = compact_story_bible(task_input.get("story_bible"))
     story_content = story_bible.get("content") or {}
     main_plot = story_content.get("main_plot") or {}
-    plot_reference_pack = task_input.get("plot_reference_pack") or {}
     pacing_state = _pacing_state_from_input(task_input)
     production_pacing = task_input.get("production_pacing") or {}
     pacing_plan = production_pacing.get("pacing_plan") or {}
@@ -1019,7 +987,7 @@ def _build_event_plan_prompt(novel: Novel, task_input: dict, chapter_count: int,
     user_request = {
         key: value
         for key, value in task_input.items()
-        if key not in {"plot_reference_pack", "story_bible", "production_pacing"}
+        if key not in {"story_bible", "production_pacing"}
     }
     payload = {
         "task": {
@@ -1064,24 +1032,6 @@ def _build_event_plan_prompt(novel: Novel, task_input: dict, chapter_count: int,
                 else []
             ),
             "rule": "从当前真实状态继续，按顺序覆盖本范围内最早未完成的节点；相邻节点可组成一个连续剧情单元，但不得跳过前置节点。",
-        },
-        "plot_design_reference_pack": {
-            "usage_policy": {
-                "goal": "使用结构化剧情经验扩展人物欲望、主动选择、升级、转折、代价和回报",
-                "forbidden": "复制人物、专名、具体事件组合、独特道具、原句或结局",
-            },
-            "references": [
-                {
-                    "passage_id": item.get("passage_id", ""),
-                    "excerpt": item.get("excerpt", ""),
-                    "mechanism": item.get("mechanism") or {},
-                    "experience": _compact_plot_experience(
-                        item.get("experience")
-                    ),
-                    "technique": item.get("technique", ""),
-                }
-                for item in (plot_reference_pack.get("references") or [])[:4]
-            ],
         },
         "expected_output": {
             "event_type": "ordinary|turning_point|final_arc|finale|epilogue",
@@ -1858,28 +1808,8 @@ def run_event_generation_graph(db: Session, task: GenerationTask, novel: Novel) 
         }
 
     def plan_event(state: EventGenerationState) -> EventGenerationState:
-        _set_task_progress(db, task, 12, "正在从优秀样本检索剧情可能性", step_key="plot_rag")
-        try:
-            plot_reference_pack = build_plot_design_reference_pack(
-                db,
-                novel=novel,
-                planning_input=planning_input,
-                preferences=preferences,
-            )
-        except Exception as exc:
-            db.rollback()
-            plot_reference_pack = {
-                "status": "degraded",
-                "reason": f"剧情样本检索失败：{exc}",
-                "channel": "plot",
-                "references": [],
-                "total_chars": 0,
-            }
-        current_planning_input = {
-            **planning_input,
-            "plot_reference_pack": plot_reference_pack,
-        }
-        _set_task_progress(db, task, 15, "正在发散并筛选多方向剧情事件", step_key="event_plan")
+        current_planning_input = dict(planning_input)
+        _set_task_progress(db, task, 12, "正在发散并筛选多方向剧情事件", step_key="event_plan")
         if planning_llm_config is None:
             event_plan = _build_simulated_event_plan(
                 novel,
@@ -2276,13 +2206,6 @@ def run_event_generation_graph(db: Session, task: GenerationTask, novel: Novel) 
                 )
                 event_plan["planner_error"] = str(exc)
                 event_plan["generation_mode"] = "simulation_after_planner_error"
-        event_plan["plot_rag"] = {
-            "status": plot_reference_pack.get("status", "skipped"),
-            "reference_count": len(plot_reference_pack.get("references") or []),
-            "total_chars": plot_reference_pack.get("total_chars", 0),
-            "embedding_model": plot_reference_pack.get("embedding_model", ""),
-            "reason": plot_reference_pack.get("reason", ""),
-        }
         story_event = _create_or_update_story_event(
             db=db,
             task=task,
@@ -2305,7 +2228,6 @@ def run_event_generation_graph(db: Session, task: GenerationTask, novel: Novel) 
                 "chapter_count": chapter_count,
                 "candidate_direction_count": len(event_plan.get("candidate_directions") or []),
                 "planning_quality": event_plan.get("planning_quality", {}),
-                "plot_rag": event_plan.get("plot_rag", {}),
             },
         )
         _set_task_progress(db, task, 18, "正在检索情节写法与搞笑话术", step_key="event_research")
@@ -2343,7 +2265,6 @@ def run_event_generation_graph(db: Session, task: GenerationTask, novel: Novel) 
             "revision_results": [],
             "research_source_ids": research_summary.get("source_ids", []),
             "research_summary": research_summary,
-            "plot_reference_pack": plot_reference_pack,
         }
 
     def finish_plan_only(state: EventGenerationState) -> EventGenerationState:
