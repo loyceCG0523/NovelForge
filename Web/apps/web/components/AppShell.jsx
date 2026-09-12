@@ -313,9 +313,9 @@ export default function AppShell({ title, actions, children }) {
       <main className="main">
         <header className="topbar">
           <div className="title-block">
-            <h1>{title}</h1>
+            <h1 id="appshell-title-slot">{title}</h1>
           </div>
-          <div className="top-actions">{actions}</div>
+          <div className="top-actions" id="appshell-actions-slot">{actions}</div>
         </header>
         <div className="content">{children}</div>
       </main>

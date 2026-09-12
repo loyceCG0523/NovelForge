@@ -16,7 +16,7 @@ from app.schemas.research import ResearchSearchRequest, ResearchSourceRead
 from app.services.llm_client import (
     LLMClient,
     build_llm_config,
-    is_official_deepseek_v4_flash,
+    is_official_deepseek_model,
 )
 from app.services.tavily_search import build_tavily_config, is_allowed_research_source, search_tavily
 
@@ -53,7 +53,7 @@ def search_research_sources(
     llm_config = build_llm_config(current_user.preferences)
     use_deepseek_web_search = bool(
         llm_config
-        and is_official_deepseek_v4_flash(llm_config.base_url, llm_config.model)
+        and is_official_deepseek_model(llm_config.base_url, llm_config.model)
     )
     tavily_config = build_tavily_config(current_user.preferences)
     if not use_deepseek_web_search and tavily_config is None:

@@ -16,13 +16,15 @@ NovelForge Windows 是不依赖 NovelForge 服务端的本地桌面版本。应�
 
 Windows 版不需要部署 NovelForge 服务器，也不依赖 Redis、PostgreSQL、MinIO 或 Docker。应用仅在本机回环地址启动内置接口，退出应用后即停止。调用模型、Embedding 或 Tavily 时，应用会直接连接用户配置的接口。
 
-桌面壳默认使用 Chromium 的自适应 GPU 渲染，并继续关闭 Web 主题中高开销的实时背景模糊。若显卡驱动或远程桌面环境出现拖影、花屏，可从开始菜单启动“NovelForge（兼容渲染）”，或在启动前设置 `NOVELFORGE_DISABLE_GPU=1`。旧的 `NOVELFORGE_ENABLE_GPU=1` 开关仍兼容。
+桌面壳默认使用 Chromium 软件渲染，启动时固定传入 `--disable-gpu`，不依赖独显、核显、虚拟显示适配器或 DirectComposition。这样会牺牲一部分动画与滚动性能，但可避免 Qt WebEngine 与 Windows 桌面合成之间的纹理撕裂、黑屏和陈旧页面。
 
 WebEngine 的 Cookie/localStorage 持久保留，HTTP 代码缓存按 Next build id 隔离，避免升级后混用旧 HTML、RSC 与 JavaScript。应用优先在 `127.0.0.1:47831` 启动；端口被占用时自动回退到临时回环端口。桌面 API 会拒绝跨站浏览器请求，不会监听局域网地址。
 
 0.2.5 起，侧栏跳转只保留一个在途路由和最后一次点击，并在 SPA 路由提交后短时推进 Qt 真实视图重绘。这不是加载动画；页面内容仍直接切换，用于避免 Chromium 已更新而 Windows 桌面仍残留旧纹理。
 
-0.2.6 起，这一推进覆盖所有可能产生新帧的操作（滚动、点击、输入、侧栏动画、窗口尺寸变化），并在窗口可见期间保持 500 ms 心跳重绘：混合显卡机器上偶发的撕裂帧/黑屏卡住（Qt/DWM 呈现了过期纹理而无后续补帧）会在约 0.2–0.5 秒内自愈，不再停留到用户截图。窗口初始尺寸也钳制到屏幕可用区域。定位方法与数据见 [`docs/PERFORMANCE.md`](docs/PERFORMANCE.md)。
+0.2.7 起，所有正式安装默认关闭 Chromium GPU 加速。0.2.5/0.2.6 的路由串行与补帧机制仍保留，用于降低软件渲染下的呈现滞后；窗口初始尺寸也钳制到屏幕可用区域。定位方法与数据见 [`docs/PERFORMANCE.md`](docs/PERFORMANCE.md)。
+
+0.2.8 起，Windows 本地任务在 SQLite 中写入实时任务事件时，会使用独立已提交事务和任务级序号串行化，避免正文生成、审校和后台记忆同步并发时因 `generation_task_events.task_id, sequence_no` 重复而中断任务。
 
 ## 开发启动
 
@@ -50,7 +52,7 @@ npm run test:markdown-import
 npm run build
 ```
 
-真实 Qt WebEngine 交互性能测试（分别覆盖兼容渲染和默认 GPU）：
+真实 Qt WebEngine 交互性能测试（默认软件渲染；GPU 仅用于历史回归诊断）：
 
 ```powershell
 .\.venv\Scripts\python.exe scripts\profile_interactions.py --output .runtime\perf\software --rendering software

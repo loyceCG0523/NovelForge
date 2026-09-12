@@ -1,5 +1,5 @@
 #ifndef MyAppVersion
-  #define MyAppVersion "0.2.6"
+  #define MyAppVersion "0.2.8"
 #endif
 #ifndef MyAppId
   #define MyAppId "{{0E2E915A-9CF2-49B2-88A9-95D9B9349127}"
@@ -62,10 +62,10 @@ Source: "..\dist\NovelForge\*"; DestDir: "{app}"; Flags: ignoreversion recursesu
 [InstallDelete]
 Type: files; Name: "{app}\_internal\icuuc.dll"
 Type: files; Name: "{app}\_internal\icudt58.dll"
+Type: files; Name: "{group}\NovelForge（兼容渲染）.lnk"
 
 [Icons]
 Name: "{group}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"; WorkingDir: "{app}"
-Name: "{group}\{#MyAppName}（兼容渲染）"; Filename: "{app}\{#MyAppExeName}"; Parameters: "--safe-rendering"; WorkingDir: "{app}"; Comment: "显卡驱动或远程桌面显示异常时使用软件渲染"
 Name: "{autodesktop}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"; WorkingDir: "{app}"; Tasks: desktopicon
 
 [Run]

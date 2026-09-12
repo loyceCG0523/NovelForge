@@ -109,6 +109,24 @@ def is_official_deepseek_v4_flash(base_url: str, model: str) -> bool:
     )
 
 
+def is_official_deepseek_model(base_url: str, model: str) -> bool:
+    """匹配 DeepSeek 官方根地址与任意 deepseek 系列模型。
+
+    原生 web_search 等能力只要求官方端点 + DeepSeek 系列模型，
+    不限定具体型号；型号相关的参数特调仍用 is_official_deepseek_v4_flash。
+    """
+    parsed = urlparse(str(base_url or "").strip())
+    return (
+        parsed.scheme.lower() == "https"
+        and (parsed.hostname or "").lower() == "api.deepseek.com"
+        and (parsed.port in {None, 443})
+        and parsed.path.rstrip("/") == ""
+        and not parsed.query
+        and not parsed.fragment
+        and str(model or "").strip().lower().startswith("deepseek")
+    )
+
+
 def normalize_context_window_tokens(value: Any) -> int:
     """读取模型上下文长度；旧配置按 128K 兼容。"""
     try:
@@ -492,7 +510,7 @@ class LLMClient:
 
     def search_web(self, query: str, *, max_results: int = 3) -> list[dict[str, Any]]:
         """使用 DeepSeek Responses API 的服务端 web_search 工具。"""
-        if not is_official_deepseek_v4_flash(self.config.base_url, self.config.model):
+        if not is_official_deepseek_model(self.config.base_url, self.config.model):
             raise ValueError("当前模型配置不支持 DeepSeek 原生 web_search")
         cleaned_query = str(query or "").strip()
         if not cleaned_query:

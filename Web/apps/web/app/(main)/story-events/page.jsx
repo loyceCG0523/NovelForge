@@ -2,8 +2,9 @@
 
 import { Suspense, useEffect, useMemo, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
+import useSWR from "swr";
 
-import AppShell from "@/components/AppShell";
+import AppShellRegion from "@/components/AppShellRegion";
 import EmptyState from "@/components/EmptyState";
 import ReviewIssuePanel from "@/components/ReviewIssuePanel";
 import { apiFetch, isTaskInFlight, isTaskSettled } from "@/lib/api";
@@ -36,11 +37,18 @@ function StoryEventsContent() {
   // 剧情事件页只处理事件级信息：查看与编辑计划、事件审校、重跑单章或从某章继续。
   const router = useRouter();
   const searchParams = useSearchParams();
-  const [projects, setProjects] = useState([]);
   const [selectedNovelId, setSelectedNovelId] = useState("");
-  const [events, setEvents] = useState([]);
   const [selectedEventId, setSelectedEventId] = useState("");
-  const [eventDetail, setEventDetail] = useState(null);
+  // 作品/事件列表/事件详情走 SWR 缓存：切回页面秒显缓存，后台静默刷新。
+  const { data: projects = [] } = useSWR("/api/novels");
+  const { data: events = [], mutate: mutateEvents } = useSWR(
+    selectedNovelId ? `/api/novels/${selectedNovelId}/story-events` : null
+  );
+  const { data: eventDetail = null, mutate: mutateEventDetail } = useSWR(
+    selectedNovelId && selectedEventId
+      ? `/api/novels/${selectedNovelId}/story-events/${selectedEventId}`
+      : null
+  );
   const [trackingTaskId, setTrackingTaskId] = useState("");
   const [busyPlanId, setBusyPlanId] = useState("");
   const [planDraft, setPlanDraft] = useState(null);
@@ -53,50 +61,29 @@ function StoryEventsContent() {
     [projects, selectedNovelId]
   );
 
-  async function loadProjects() {
-    const data = await apiFetch("/api/novels");
-    setProjects(data);
-    const nextNovelId = searchParams.get("novel") || selectedNovelId || data[0]?.id || "";
-    setSelectedNovelId(nextNovelId);
-    return nextNovelId;
-  }
+  useEffect(() => {
+    // 作品列表由 SWR 供给；这里只负责按 URL 参数或当前选择挑定作品。
+    if (!projects.length) return;
+    const nextNovelId = searchParams.get("novel") || selectedNovelId || projects[0]?.id || "";
+    if (nextNovelId && nextNovelId !== selectedNovelId) setSelectedNovelId(nextNovelId);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [searchParams, projects]);
 
-  async function loadEvents(novelId) {
-    if (!novelId) return "";
-    const data = await apiFetch(`/api/novels/${novelId}/story-events`);
-    setEvents(data);
-    const eventFromUrl = searchParams.get("event");
-    const nextEventId = eventFromUrl || selectedEventId || data[0]?.id || "";
-    setSelectedEventId(nextEventId);
-    return nextEventId;
-  }
-
-  async function loadEventDetail(novelId, eventId) {
-    if (!novelId || !eventId) {
-      setEventDetail(null);
+  useEffect(() => {
+    // 事件列表变化时校正选中事件：URL 指定 > 保持当前（需仍存在）> 默认第一个。
+    if (!selectedNovelId || !events.length) {
+      if (!events.length && selectedEventId) setSelectedEventId("");
       return;
     }
-    setEventDetail(await apiFetch(`/api/novels/${novelId}/story-events/${eventId}`));
-  }
-
-  useEffect(() => {
-    loadProjects()
-      .then((novelId) => loadEvents(novelId).then((eventId) => loadEventDetail(novelId, eventId)))
-      .catch((err) => setError(err.message));
-  }, [searchParams]);
-
-  useEffect(() => {
-    if (!selectedNovelId) return;
-    loadEvents(selectedNovelId)
-      .then((eventId) => loadEventDetail(selectedNovelId, eventId))
-      .catch((err) => setError(err.message));
-  }, [selectedNovelId]);
-
-  useEffect(() => {
-    if (selectedNovelId && selectedEventId) {
-      loadEventDetail(selectedNovelId, selectedEventId).catch((err) => setError(err.message));
-    }
-  }, [selectedEventId]);
+    const eventFromUrl = searchParams.get("event");
+    const nextEventId =
+      (eventFromUrl && events.some((item) => item.id === eventFromUrl) && eventFromUrl)
+      || (events.some((item) => item.id === selectedEventId) && selectedEventId)
+      || events[0]?.id
+      || "";
+    if (nextEventId !== selectedEventId) setSelectedEventId(nextEventId);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [events, selectedNovelId]);
 
   useEffect(() => {
     if (!eventDetail) {
@@ -135,10 +122,10 @@ function StoryEventsContent() {
     refresh: async () => {
       const task = await apiFetch(`/api/novels/${selectedNovelId}/tasks/${trackingTaskId}`);
       if (isTaskSettled(task.status)) {
-        await loadEvents(selectedNovelId);
-        await loadEventDetail(selectedNovelId, selectedEventId);
+        await mutateEvents();
+        await mutateEventDetail();
       } else {
-        await loadEventDetail(selectedNovelId, selectedEventId);
+        await mutateEventDetail();
       }
       setError("");
       if (task.status === "completed") {
@@ -234,7 +221,7 @@ function StoryEventsContent() {
         method: "PATCH",
         body: JSON.stringify(planDraft)
       });
-      setEventDetail(updated);
+      mutateEventDetail(updated, { revalidate: false });
       setMessage("章节计划已保存");
       return updated;
     } catch (err) {
@@ -263,7 +250,8 @@ function StoryEventsContent() {
   }
 
   return (
-    <AppShell
+    <>
+    <AppShellRegion
       title="剧情事件"
       actions={
         <>
@@ -275,7 +263,7 @@ function StoryEventsContent() {
           <button className="primary-button" disabled={!selectedNovelId} onClick={() => router.push(`/chapters?novel=${selectedNovelId}`)}>章节管理</button>
         </>
       }
-    >
+    />
       {projects.length === 0 ? (
         <EmptyState title="还没有作品" description="请先创建作品，再生成剧情事件。" action={<a className="primary-button" href="/projects">去创建作品</a>} />
       ) : events.length === 0 ? (
@@ -476,7 +464,7 @@ function StoryEventsContent() {
           </div>
         </section>
       )}
-    </AppShell>
+    </>
   );
 }
 

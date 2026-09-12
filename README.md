@@ -7,7 +7,7 @@ AI 辅助长篇小说创作系统。从“起始需求文档”创建作品后�
 | 目录 | 版本 | 运行方式 |
 | --- | --- | --- |
 | [`Web/`](Web/) | Web 版（多用户服务端） | Next.js + FastAPI + Worker + PostgreSQL/Redis/MinIO |
-| [`Windows/`](Windows/) | Windows 本地版（当前 0.2.6） | Web 前端桌面壳 + 本地 API/进程内任务 + SQLite/本地文件 |
+| [`Windows/`](Windows/) | Windows 本地版（当前 0.2.8） | Web 前端桌面壳 + 本地 API/进程内任务 + SQLite/本地文件 |
 
 Web 版保留原有登录、多用户、公共样本协作和服务端任务架构。Windows 版复用 Web 的完整前端设计与可本地运行的业务能力，不需要部署 NovelForge 服务器；仅移除账号体系和公共样本社区能力。数据默认保存在当前 Windows 用户的本地应用数据目录，安装包由 `Windows/scripts/build.ps1` 产出（PyInstaller + Inno Setup）。
 

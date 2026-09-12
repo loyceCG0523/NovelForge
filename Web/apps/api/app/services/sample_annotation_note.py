@@ -10,9 +10,10 @@ from typing import Any
 from app.services.llm_client import (
     LLMClient,
     LLMConfig,
+    LLMRequestCancelledError,
     build_llm_config,
     build_review_llm_config,
-    is_official_deepseek_v4_flash,
+    is_official_deepseek_model,
 )
 from app.services.sample_collaboration import ANNOTATION_CATEGORIES
 
@@ -65,17 +66,6 @@ def _configured_models(preferences: dict[str, Any]) -> list[LLMConfig]:
             unique.append(config)
             seen.add(key)
     return unique
-
-
-def _deepseek_search_config(preferences: dict[str, Any]) -> LLMConfig | None:
-    return next(
-        (
-            config
-            for config in _configured_models(preferences)
-            if is_official_deepseek_v4_flash(config.base_url, config.model)
-        ),
-        None,
-    )
 
 
 def _compact(value: str, *, limit: int) -> str:
@@ -200,34 +190,61 @@ def generate_annotation_note(
             used_web_search=False,
         )
 
-    config = _deepseek_search_config(preferences)
-    if config is None:
+    config_candidates = [
+        config
+        for config in configs
+        if is_official_deepseek_model(config.base_url, config.model)
+    ]
+    if not config_candidates:
         raise AnnotationNoteGenerationError(
-            "网络热梗说明需要将正文或审校模型配置为 DeepSeek 官方 deepseek-v4-flash"
+            "网络热梗说明需要将正文或审校模型配置为 DeepSeek 官方系列模型"
         )
     query_quote = _compact(quote_text, limit=MAX_SEARCH_QUOTE_LENGTH)
-    sources = LLMClient(config).search_web(
-        f'中文网络热梗“{query_quote}”的含义、常见语境和使用方式',
-        max_results=5,
-    )
-    if not sources:
-        raise AnnotationNoteGenerationError(
-            "DeepSeek web_search 没有找到可核验的热梗资料，请缩短选区或稍后重试"
+    for config in config_candidates:
+        try:
+            sources = LLMClient(config).search_web(
+                f'中文网络热梗“{query_quote}”的含义、常见语境和使用方式',
+                max_results=5,
+            )
+        except LLMRequestCancelledError:
+            raise
+        except Exception:
+            # 该型号不支持服务端 web_search（如 flash 系列只会输出 DSML 文本），
+            # 或本次检索异常，尝试下一个已配置的 DeepSeek 模型。
+            continue
+        if not sources:
+            continue
+        note = LLMClient(config).complete_text(
+            _meme_note_prompt(
+                quote_text=quote_text,
+                surrounding_text=surrounding_text,
+                categories=categories,
+                sources=sources,
+            )
         )
-    note = LLMClient(config).complete_text(
-        _meme_note_prompt(
+        return AnnotationNoteDraft(
+            note=_clean_note(note),
+            provider="deepseek_web_search",
+            model=config.model,
+            used_web_search=True,
+            source_count=len(sources),
+        )
+
+    # 已配置的 DeepSeek 型号都不支持服务端 web_search（或均未检到资料）时，
+    # 回退为无联网核验的通用说明，避免批量解释被单条硬失败打断。
+    fallback_config = configs[0]
+    note = LLMClient(fallback_config).complete_text(
+        _generic_note_prompt(
             quote_text=quote_text,
             surrounding_text=surrounding_text,
             categories=categories,
-            sources=sources,
         )
     )
     return AnnotationNoteDraft(
         note=_clean_note(note),
-        provider="deepseek_web_search",
-        model=config.model,
-        used_web_search=True,
-        source_count=len(sources),
+        provider="review_model",
+        model=fallback_config.model,
+        used_web_search=False,
     )
 
 

@@ -2,8 +2,9 @@
 
 import { Suspense, useEffect, useMemo, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
+import useSWR from "swr";
 
-import AppShell from "@/components/AppShell";
+import AppShellRegion from "@/components/AppShellRegion";
 import EmptyState from "@/components/EmptyState";
 import ReviewIssuePanel from "@/components/ReviewIssuePanel";
 import { apiDownload, apiFetch, buildTimestampedDownloadFilename } from "@/lib/api";
@@ -22,16 +23,23 @@ function ChaptersContent() {
   // 章节页用于查看/编辑正文，同时展示 Worker 写入的上下文快照。
   const router = useRouter();
   const searchParams = useSearchParams();
-  const [projects, setProjects] = useState([]);
   const [selectedNovelId, setSelectedNovelId] = useState("");
-  const [chapters, setChapters] = useState([]);
   const [selectedChapterId, setSelectedChapterId] = useState("");
+  // 作品/章节/审校问题列表走 SWR 缓存：切回页面秒显缓存，后台静默刷新。
+  const { data: projects = [] } = useSWR("/api/novels");
+  const { data: chapters = [], mutate: mutateChapters } = useSWR(
+    selectedNovelId ? `/api/novels/${selectedNovelId}/chapters` : null
+  );
+  const { data: chapterIssues = [] } = useSWR(
+    selectedNovelId && selectedChapterId
+      ? `/api/novels/${selectedNovelId}/reviews?chapter_id=${selectedChapterId}`
+      : null
+  );
   const [draft, setDraft] = useState(emptyChapter);
   const [message, setMessage] = useState("");
   const [error, setError] = useState("");
   const [contentExpanded, setContentExpanded] = useState(false);
   const [contextExpanded, setContextExpanded] = useState(false);
-  const [chapterIssues, setChapterIssues] = useState([]);
   const [pendingDeleteChapter, setPendingDeleteChapter] = useState(null);
   const [deletingChapterId, setDeletingChapterId] = useState("");
   const [exportingFormat, setExportingFormat] = useState("");
@@ -46,48 +54,31 @@ function ChaptersContent() {
   );
   const totalWords = chapters.reduce((sum, chapter) => sum + chapter.word_count, 0);
 
-  async function loadProjects() {
-    // 章节页也支持 URL 携带 novel 参数，方便从工作台跳转到当前作品。
-    const data = await apiFetch("/api/novels");
-    setProjects(data);
-    const nextNovelId = searchParams.get("novel") || data[0]?.id || "";
-    setSelectedNovelId(nextNovelId);
-    return nextNovelId;
-  }
+  useEffect(() => {
+    // 作品列表由 SWR 供给；这里只负责按 URL 参数或默认首部挑定当前作品。
+    if (!projects.length) return;
+    const nextNovelId = searchParams.get("novel") || projects[0]?.id || "";
+    if (nextNovelId && nextNovelId !== selectedNovelId) setSelectedNovelId(nextNovelId);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [searchParams, projects]);
 
-  async function loadChapters(novelId, preferredChapterId = "") {
-    // 加载章节后默认选中第一章；没有章节时保持空草稿状态。
-    if (!novelId) return;
-    const data = await apiFetch(`/api/novels/${novelId}/chapters`);
-    setChapters(data);
-    const nextChapter = data.find((chapter) => chapter.id === preferredChapterId) || data[0];
-    setSelectedChapterId(nextChapter?.id || "");
-    setDraft(nextChapter || { ...emptyChapter, chapter_index: data.length + 1 });
-    if (nextChapter?.id) await loadChapterIssues(novelId, nextChapter.id);
-  }
-
-  async function loadChapterIssues(novelId, chapterId) {
-    if (!novelId || !chapterId) {
-      setChapterIssues([]);
+  useEffect(() => {
+    // 章节列表变化时校正选中章节：优先保持当前选择，否则默认第一章。
+    if (!selectedNovelId) return;
+    if (!chapters.length) {
+      if (selectedChapterId) setSelectedChapterId("");
       return;
     }
-    setChapterIssues(await apiFetch(`/api/novels/${novelId}/reviews?chapter_id=${chapterId}`));
-  }
-
-  useEffect(() => {
-    loadProjects().then(loadChapters).catch((err) => setError(err.message));
-  }, [searchParams]);
-
-  useEffect(() => {
-    if (selectedNovelId) loadChapters(selectedNovelId).catch((err) => setError(err.message));
-  }, [selectedNovelId]);
+    const nextChapter = chapters.find((chapter) => chapter.id === selectedChapterId) || chapters[0];
+    if (nextChapter.id !== selectedChapterId) setSelectedChapterId(nextChapter.id);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [chapters, selectedNovelId]);
 
   useEffect(() => {
     if (selectedChapter) {
       setDraft(selectedChapter);
       setContentExpanded(false);
       setContextExpanded(false);
-      if (selectedNovelId) loadChapterIssues(selectedNovelId, selectedChapter.id).catch((err) => setError(err.message));
     }
   }, [selectedChapter]);
 
@@ -129,9 +120,8 @@ function ChaptersContent() {
             body: JSON.stringify(payload)
           });
       setMessage(`已保存：第 ${saved.chapter_index} 章`);
-      await loadChapters(selectedNovelId);
       setSelectedChapterId(saved.id);
-      await loadChapterIssues(selectedNovelId, saved.id);
+      await mutateChapters();
     } catch (err) {
       setError(err.message);
     }
@@ -146,7 +136,7 @@ function ChaptersContent() {
       await apiFetch(`/api/novels/${selectedNovelId}/chapters/${pendingDeleteChapter.id}`, { method: "DELETE" });
       setMessage("章节已删除");
       setPendingDeleteChapter(null);
-      await loadChapters(selectedNovelId);
+      await mutateChapters();
     } catch (err) {
       setError(err.message);
     } finally {
@@ -175,7 +165,8 @@ function ChaptersContent() {
   }
 
   return (
-    <AppShell
+    <>
+    <AppShellRegion
       title="章节管理"
       actions={
         <>
@@ -188,7 +179,7 @@ function ChaptersContent() {
           <button className="primary-button" disabled={!selectedNovelId} onClick={startNewChapter}>新建章节</button>
         </>
       }
-    >
+    />
       {projects.length === 0 ? (
         <EmptyState title="还没有作品" description="请先在作品管理里创建作品，再维护章节。" action={<a className="primary-button" href="/projects">去创建作品</a>} />
       ) : (
@@ -336,7 +327,7 @@ function ChaptersContent() {
           ) : null}
         </>
       )}
-    </AppShell>
+    </>
   );
 }
 

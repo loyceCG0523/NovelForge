@@ -15,7 +15,7 @@ from app.services.llm_client import (
     LLMClient,
     LLMConfig,
     LLMRequestCancelledError,
-    is_official_deepseek_v4_flash,
+    is_official_deepseek_model,
 )
 from app.services.tavily_search import (
     build_tavily_config,
@@ -167,7 +167,7 @@ def collect_event_research(
     native_search_config = search_llm_config or llm_config
     use_deepseek_web_search = bool(
         native_search_config
-        and is_official_deepseek_v4_flash(
+        and is_official_deepseek_model(
             native_search_config.base_url,
             native_search_config.model,
         )

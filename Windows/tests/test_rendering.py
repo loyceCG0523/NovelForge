@@ -6,10 +6,7 @@ import pytest
 
 from novelforge_windows.rendering import (
     CHROMIUM_FLAGS_ENV,
-    DISABLE_GPU_ENV,
     EFFECTIVE_RENDERING_ENV,
-    ENABLE_GPU_ENV,
-    GPU_MODE,
     RECOVERY_RENDERING_ENV,
     SAFE_RENDERING_ARGUMENT,
     SOFTWARE_MODE,
@@ -26,27 +23,24 @@ from novelforge_windows.rendering import (
 def clear_rendering_environment(monkeypatch):
     for name in (
         CHROMIUM_FLAGS_ENV,
-        DISABLE_GPU_ENV,
-        ENABLE_GPU_ENV,
         EFFECTIVE_RENDERING_ENV,
         RECOVERY_RENDERING_ENV,
     ):
         monkeypatch.delenv(name, raising=False)
 
 
-def test_gpu_acceleration_is_the_adaptive_default(tmp_path):
+def test_software_rendering_is_the_default_on_every_machine(tmp_path):
     arguments = ["NovelForge.exe"]
 
     mode = configure_webengine_rendering(arguments, data_dir=tmp_path)
 
-    assert mode == GPU_MODE
-    assert os.getenv(CHROMIUM_FLAGS_ENV) is None
+    assert mode == SOFTWARE_MODE
+    assert os.getenv(CHROMIUM_FLAGS_ENV) == "--disable-gpu"
     assert arguments == ["NovelForge.exe"]
-    assert not software_rendering_active()
+    assert software_rendering_active()
 
 
-def test_disable_gpu_environment_enables_compatibility_mode(tmp_path, monkeypatch):
-    monkeypatch.setenv(DISABLE_GPU_ENV, "1")
+def test_existing_chromium_flags_are_preserved_when_software_is_enforced(tmp_path, monkeypatch):
     monkeypatch.setenv(CHROMIUM_FLAGS_ENV, "--disable-logging")
 
     mode = configure_webengine_rendering(["NovelForge.exe"], data_dir=tmp_path)
@@ -66,8 +60,7 @@ def test_safe_rendering_argument_is_consumed_before_qapplication(tmp_path):
     assert os.getenv(CHROMIUM_FLAGS_ENV) == "--disable-gpu"
 
 
-def test_existing_chromium_flags_are_preserved(tmp_path, monkeypatch):
-    monkeypatch.setenv(DISABLE_GPU_ENV, "true")
+def test_existing_disable_gpu_flag_is_not_duplicated(tmp_path, monkeypatch):
     monkeypatch.setenv(CHROMIUM_FLAGS_ENV, "--disable-logging --disable-gpu")
 
     configure_webengine_rendering(["NovelForge.exe"], data_dir=tmp_path)
@@ -91,21 +84,11 @@ def test_renderer_recovery_is_one_shot_and_not_consumed_during_configuration(tmp
     assert not has_gpu_recovery_request(tmp_path)
 
 
-def test_legacy_enable_gpu_overrides_only_automatic_recovery(tmp_path, monkeypatch):
-    request_safe_rendering_once(tmp_path, reason="AbnormalTerminationStatus", exit_code=1)
-    monkeypatch.setenv(ENABLE_GPU_ENV, "1")
-
-    mode = configure_webengine_rendering(["NovelForge.exe"], data_dir=tmp_path)
-
-    assert mode == GPU_MODE
-    assert not recovery_rendering_active()
-    assert has_gpu_recovery_request(tmp_path)
-
-
-def test_explicit_disable_wins_over_legacy_enable_gpu(tmp_path, monkeypatch):
-    monkeypatch.setenv(ENABLE_GPU_ENV, "1")
-    monkeypatch.setenv(DISABLE_GPU_ENV, "yes")
+def test_acceleration_hints_cannot_reenable_gpu_rendering(tmp_path, monkeypatch):
+    monkeypatch.setenv(CHROMIUM_FLAGS_ENV, "--use-angle=d3d11")
 
     mode = configure_webengine_rendering(["NovelForge.exe"], data_dir=tmp_path)
 
     assert mode == SOFTWARE_MODE
+    assert not recovery_rendering_active()
+    assert os.getenv(CHROMIUM_FLAGS_ENV) == "--use-angle=d3d11 --disable-gpu"

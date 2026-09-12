@@ -2,8 +2,9 @@
 
 import { useEffect, useState } from "react";
 
-import AppShell from "@/components/AppShell";
+import AppShellRegion from "@/components/AppShellRegion";
 import { apiFetch, setStoredUser } from "@/lib/api";
+import useSWR from "swr";
 
 const defaultForm = {
   llm_base_url: "https://api.openai.com/v1",
@@ -52,12 +53,16 @@ export default function PersonalizationPage() {
     embedding: idleModelTest
   });
 
-  useEffect(() => {
-    loadPreferences().catch((err) => setError(err.message));
-  }, []);
+  // 账号偏好走 SWR 缓存：切回页面秒显缓存，后台静默刷新；编辑中不被覆盖。
+  const { data: me, mutate: mutateMe } = useSWR("/api/auth/me");
 
-  async function loadPreferences() {
-    const user = await apiFetch("/api/auth/me");
+  useEffect(() => {
+    if (!me || editing) return;
+    applyUserToForm(me);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [me, editing]);
+
+  function applyUserToForm(user) {
     setStoredUser(user);
     const llm = user.preferences?.llm || {};
     const reviewLlm = user.preferences?.review_llm || {};
@@ -272,6 +277,7 @@ export default function PersonalizationPage() {
         })
       });
       setStoredUser(user);
+      mutateMe(user, { revalidate: false });
       const nextForm = {
         ...form,
         llm_api_key: "",
@@ -298,7 +304,8 @@ export default function PersonalizationPage() {
   }
 
   return (
-    <AppShell
+    <>
+    <AppShellRegion
       title="设置"
       actions={editing ? (
         <div className="inline-actions">
@@ -308,7 +315,7 @@ export default function PersonalizationPage() {
       ) : (
         <button className="primary-button" onClick={() => setEditing(true)}>编辑</button>
       )}
-    >
+    />
       {(message || error) ? <div className={error ? "error-box" : "success-box"}>{error || message}</div> : null}
 
       <section className="panel llm-only-panel">
@@ -627,6 +634,6 @@ export default function PersonalizationPage() {
           ) : null}
         </div>
       </section>
-    </AppShell>
+    </>
   );
 }

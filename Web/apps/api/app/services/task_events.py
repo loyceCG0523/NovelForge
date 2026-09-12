@@ -2,16 +2,76 @@
 
 from __future__ import annotations
 
+from contextlib import contextmanager
 import threading
 import time
-from typing import Any
+from typing import Any, Iterator
 from uuid import UUID, uuid4
 
 from sqlalchemy import func, select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.models.generation_task import GenerationTask
 from app.models.generation_task_event import GenerationTaskEvent
+
+
+_SEQUENCE_ALLOCATION_RETRIES = 4
+_SEQUENCE_RETRY_SECONDS = 0.02
+
+
+class _TaskEventLockPool:
+    """Short-lived in-process locks used where SQLite cannot lock a row."""
+
+    def __init__(self) -> None:
+        self._guard = threading.Lock()
+        self._locks: dict[str, threading.RLock] = {}
+        self._users: dict[str, int] = {}
+
+    @contextmanager
+    def hold(self, task_id: UUID) -> Iterator[None]:
+        key = str(task_id)
+        with self._guard:
+            lock = self._locks.get(key)
+            if lock is None:
+                lock = threading.RLock()
+                self._locks[key] = lock
+                self._users[key] = 0
+            self._users[key] += 1
+        try:
+            with lock:
+                yield
+        finally:
+            with self._guard:
+                remaining = self._users[key] - 1
+                if remaining:
+                    self._users[key] = remaining
+                else:
+                    self._users.pop(key, None)
+                    self._locks.pop(key, None)
+
+
+_task_event_locks = _TaskEventLockPool()
+
+
+def _uses_sqlite(db: Session) -> bool:
+    try:
+        return db.get_bind().dialect.name == "sqlite"
+    except Exception:
+        return False
+
+
+def _is_task_sequence_conflict(error: IntegrityError) -> bool:
+    message = str(getattr(error, "orig", error)).lower()
+    return (
+        "uq_generation_task_events_task_sequence" in message
+        or (
+            "generation_task_events" in message
+            and "task_id" in message
+            and "sequence_no" in message
+            and ("unique" in message or "duplicate" in message)
+        )
+    )
 
 
 def emit_task_event(
@@ -30,42 +90,117 @@ def emit_task_event(
     commit: bool = True,
 ) -> GenerationTaskEvent:
     """为任务追加事件；sequence_no 让前端可以断线增量恢复。"""
-    # 正文 Worker 与 Memory Worker 会并发向同一个源任务写事件。先锁定该任务行，
-    # 再读取 MAX(sequence_no)，确保同一任务的序号分配串行化；不同任务互不阻塞。
-    db.scalar(
-        select(GenerationTask.id)
-        .where(GenerationTask.id == task.id)
-        .with_for_update()
-    )
-    sequence_no = int(
-        db.scalar(
-            select(func.coalesce(func.max(GenerationTaskEvent.sequence_no), 0)).where(
-                GenerationTaskEvent.task_id == task.id
-            )
-        )
-        or 0
-    ) + 1
-    event = GenerationTaskEvent(
-        novel_id=task.novel_id,
-        task_id=task.id,
-        sequence_no=sequence_no,
-        event_type=str(event_type or "step")[:50],
-        step_key=str(step_key or "")[:100],
-        status=str(status or "info")[:30],
-        title=str(title or "")[:200],
-        message=str(message or ""),
-        progress=max(0, min(int(progress if progress is not None else task.progress or 0), 100)),
+    task_id = task.id
+    task_novel_id = task.novel_id
+    task_progress = task.progress
+
+    # PostgreSQL can serialize the following allocation with FOR UPDATE. SQLite
+    # ignores that clause, and callers may already hold a stale read snapshot.
+    # Commit that caller transaction first, then allocate in a fresh Session
+    # while a process-local per-task lock covers SELECT MAX + INSERT + COMMIT.
+    if _uses_sqlite(db) and commit:
+        from app.db.session import SessionLocal
+
+        with _task_event_locks.hold(task_id):
+            db.commit()
+            with SessionLocal() as event_db:
+                return _emit_task_event(
+                    event_db,
+                    task_id=task_id,
+                    novel_id=task_novel_id,
+                    task_progress=task_progress,
+                    event_type=event_type,
+                    step_key=step_key,
+                    status=status,
+                    title=title,
+                    message=message,
+                    progress=progress,
+                    chapter_id=chapter_id,
+                    chapter_index=chapter_index,
+                    payload=payload,
+                    commit=True,
+                )
+
+    return _emit_task_event(
+        db,
+        task_id=task_id,
+        novel_id=task_novel_id,
+        task_progress=task_progress,
+        event_type=event_type,
+        step_key=step_key,
+        status=status,
+        title=title,
+        message=message,
+        progress=progress,
         chapter_id=chapter_id,
         chapter_index=chapter_index,
-        payload=payload or {},
+        payload=payload,
+        commit=commit,
     )
-    db.add(event)
-    if commit:
-        db.commit()
-        db.refresh(event)
-    else:
-        db.flush()
-    return event
+
+
+def _emit_task_event(
+    db: Session,
+    *,
+    task_id: UUID,
+    novel_id: UUID | None,
+    task_progress: int | None,
+    event_type: str,
+    step_key: str,
+    status: str,
+    title: str,
+    message: str,
+    progress: int | None,
+    chapter_id,
+    chapter_index: int | None,
+    payload: dict[str, Any] | None,
+    commit: bool,
+) -> GenerationTaskEvent:
+    for attempt in range(_SEQUENCE_ALLOCATION_RETRIES):
+        # PostgreSQL serializes concurrent workers here. SQLite uses the fresh
+        # Session and process-local lock selected by emit_task_event above.
+        db.scalar(
+            select(GenerationTask.id)
+            .where(GenerationTask.id == task_id)
+            .with_for_update()
+        )
+        sequence_no = int(
+            db.scalar(
+                select(func.coalesce(func.max(GenerationTaskEvent.sequence_no), 0)).where(
+                    GenerationTaskEvent.task_id == task_id
+                )
+            )
+            or 0
+        ) + 1
+        event = GenerationTaskEvent(
+            novel_id=novel_id,
+            task_id=task_id,
+            sequence_no=sequence_no,
+            event_type=str(event_type or "step")[:50],
+            step_key=str(step_key or "")[:100],
+            status=str(status or "info")[:30],
+            title=str(title or "")[:200],
+            message=str(message or ""),
+            progress=max(0, min(int(progress if progress is not None else task_progress or 0), 100)),
+            chapter_id=chapter_id,
+            chapter_index=chapter_index,
+            payload=payload or {},
+        )
+        db.add(event)
+        try:
+            if commit:
+                db.commit()
+                db.refresh(event)
+            else:
+                db.flush()
+            return event
+        except IntegrityError as error:
+            if not commit or not _is_task_sequence_conflict(error) or attempt + 1 >= _SEQUENCE_ALLOCATION_RETRIES:
+                raise
+            db.rollback()
+            time.sleep(_SEQUENCE_RETRY_SECONDS * (attempt + 1))
+
+    raise RuntimeError("Task event sequence allocation retries were exhausted.")
 
 
 class ChapterPreviewPublisher:

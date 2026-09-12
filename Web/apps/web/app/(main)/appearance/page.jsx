@@ -2,8 +2,9 @@
 
 import { useEffect, useState } from "react";
 
-import AppShell from "@/components/AppShell";
+import AppShellRegion from "@/components/AppShellRegion";
 import { apiFetch, getStoredUser, setStoredUser } from "@/lib/api";
+import useSWR from "swr";
 import { applyTheme, DEFAULT_THEME, getPreferredTheme, THEMES } from "@/lib/themes";
 
 export default function AppearancePage() {
@@ -12,26 +13,26 @@ export default function AppearancePage() {
   const [message, setMessage] = useState("");
   const [error, setError] = useState("");
 
+  // 账号信息走 SWR 缓存：本地偏好立即生效，账号偏好后台静默同步。
+  const { data: me, error: meError, mutate: mutateMe } = useSWR("/api/auth/me");
+
   useEffect(() => {
-    let active = true;
     const localTheme = getPreferredTheme(getStoredUser());
     setSelectedTheme(localTheme);
     applyTheme(localTheme, { notify: false });
-    apiFetch("/api/auth/me")
-      .then((user) => {
-        if (!active) return;
-        setStoredUser(user);
-        const theme = getPreferredTheme(user);
-        setSelectedTheme(theme);
-        applyTheme(theme, { notify: false });
-      })
-      .catch((err) => {
-        if (active) setError(`账号外观偏好读取失败：${err.message}`);
-      });
-    return () => {
-      active = false;
-    };
   }, []);
+
+  useEffect(() => {
+    if (!me) return;
+    setStoredUser(me);
+    const theme = getPreferredTheme(me);
+    setSelectedTheme(theme);
+    applyTheme(theme, { notify: false });
+  }, [me]);
+
+  useEffect(() => {
+    if (meError) setError(`账号外观偏好读取失败：${meError.message}`);
+  }, [meError]);
 
   async function chooseTheme(theme) {
     if (savingTheme) return;
@@ -52,6 +53,7 @@ export default function AppearancePage() {
         })
       });
       setStoredUser(user);
+      mutateMe(user, { revalidate: false });
       setMessage(`已切换为 ${THEMES.find((item) => item.id === theme)?.name} 主题，并同步到账号。`);
     } catch (err) {
       setSelectedTheme(previousTheme);
@@ -65,10 +67,11 @@ export default function AppearancePage() {
   const currentTheme = THEMES.find((theme) => theme.id === selectedTheme) || THEMES[0];
 
   return (
-    <AppShell
+    <>
+    <AppShellRegion
       title="外观设置"
       actions={<span className="appearance-current-pill"><i />正在使用 {currentTheme.name}</span>}
-    >
+    />
       <section className="appearance-hero">
         <div className="appearance-hero-copy">
           <span className="appearance-eyebrow">YOUR WRITING ATMOSPHERE</span>
@@ -159,6 +162,6 @@ export default function AppearancePage() {
           );
         })}
       </section>
-    </AppShell>
+    </>
   );
 }

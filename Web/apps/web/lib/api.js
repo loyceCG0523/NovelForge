@@ -1,4 +1,4 @@
-const API_BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL || "http://127.0.0.1:8000";
+const API_BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL || "http://127.0.0.1:8100";
 
 export function getToken() {
   // Next.js 可能在服务端渲染阶段执行模块代码，访问 localStorage 前必须判断 window。

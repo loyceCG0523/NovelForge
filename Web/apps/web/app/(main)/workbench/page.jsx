@@ -2,8 +2,9 @@
 
 import { Suspense, useEffect, useMemo, useRef, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
+import useSWR from "swr";
 
-import AppShell from "@/components/AppShell";
+import AppShellRegion from "@/components/AppShellRegion";
 import EmptyState from "@/components/EmptyState";
 import TaskExecutionPanel from "@/components/TaskExecutionPanel";
 import { apiFetch, isTaskInFlight } from "@/lib/api";
@@ -40,9 +41,12 @@ function WorkbenchContent() {
   // 工作台是成熟用户的主页面：它不直接编辑数据，而是聚合展示当前作品状态。
   const router = useRouter();
   const searchParams = useSearchParams();
-  const [projects, setProjects] = useState([]);
   const [selectedId, setSelectedId] = useState("");
-  const [dashboard, setDashboard] = useState(null);
+  // 作品列表与 Dashboard 走 SWR 缓存：切回页面先展示缓存，后台静默刷新。
+  const { data: projects = [] } = useSWR("/api/novels");
+  const { data: dashboard, mutate: mutateDashboard } = useSWR(
+    selectedId ? `/api/novels/${selectedId}/dashboard` : null
+  );
   const [message, setMessage] = useState("");
   const [error, setError] = useState("");
   const [trackingTaskId, setTrackingTaskId] = useState("");
@@ -132,28 +136,13 @@ function WorkbenchContent() {
     }
   });
 
-  async function loadProjects() {
-    // 先拿作品列表，再决定当前要展示 URL 指定作品还是默认第一部作品。
-    const data = await apiFetch("/api/novels");
-    setProjects(data);
-    const nextId = novelIdFromUrl || selectedId || data[0]?.id || "";
-    setSelectedId(nextId);
-    return nextId;
-  }
-
-  async function loadDashboard(id) {
-    // Dashboard 由后端聚合，避免前端同时请求章节、任务、风险等多个接口。
-    if (!id) return;
-    setDashboard(await apiFetch(`/api/novels/${id}/dashboard`));
-  }
-
   useEffect(() => {
-    loadProjects().then(loadDashboard).catch((err) => setError(err.message));
-  }, [novelIdFromUrl]);
-
-  useEffect(() => {
-    if (selectedId) loadDashboard(selectedId).catch((err) => setError(err.message));
-  }, [selectedId]);
+    // 作品列表由 SWR 供给；这里只负责在 URL 参数或列表变化时挑定当前作品。
+    if (!projects.length) return;
+    const nextId = novelIdFromUrl || selectedId || projects[0]?.id || "";
+    if (nextId && nextId !== selectedId) setSelectedId(nextId);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [novelIdFromUrl, projects]);
 
   useEffect(() => {
     if (!trackingTaskId && activeAgentTask?.id) {
@@ -177,7 +166,7 @@ function WorkbenchContent() {
   useLiveRefresh({
     enabled: dashboardNeedsRefresh,
     intervalMs: 1800,
-    refresh: () => loadDashboard(selectedId),
+    refresh: () => mutateDashboard(),
     onError: (err) => setError(err.message)
   });
 
@@ -186,7 +175,7 @@ function WorkbenchContent() {
     intervalMs: 2500,
     refresh: async () => {
       const task = await apiFetch(`/api/novels/${selectedId}/tasks/${trackingTaskId}`);
-      await loadDashboard(selectedId);
+      await mutateDashboard();
       setError("");
       if (task.status === "completed") {
         setMessage(task.task_type === "produce_novel" ? "自动生产任务已完成，工作台数据已刷新" : "剧情事件任务已完成，工作台数据已刷新");
@@ -225,7 +214,7 @@ function WorkbenchContent() {
       });
       setMessage(`已创建 Agent 任务：${task.id}，正在等待 Worker 执行`);
       setTrackingTaskId(task.id);
-      await loadDashboard(selectedId);
+      await mutateDashboard();
     } catch (err) {
       setError(err.message);
     }
@@ -278,7 +267,7 @@ function WorkbenchContent() {
         tomato_trial: "已启动番茄模式：系统按全书节奏推进，并在 8-10 万字事件边界暂停。",
         test_run: selectedTestRunScope === "first_chapter" ? "已启动测试模式：系统会生成首章后自动暂停。" : "已启动测试模式：系统会生成 1 个剧情事件的章节，完成后自动暂停。"
       }[productionMode] || "已启动自动生产。");
-      await loadDashboard(selectedId);
+      await mutateDashboard();
     } catch (err) {
       setError(err.message);
     }
@@ -290,7 +279,7 @@ function WorkbenchContent() {
     try {
       await apiFetch(`/api/novels/${selectedId}/auto-runs/pause`, { method: "POST" });
       setMessage("已请求暂停。当前单次模型调用返回后会立刻停止，不会继续生成后续章节。");
-      await loadDashboard(selectedId);
+      await mutateDashboard();
     } catch (err) {
       setError(err.message);
     }
@@ -302,7 +291,7 @@ function WorkbenchContent() {
     try {
       const task = await apiFetch(`/api/novels/${selectedId}/auto-runs/resume`, { method: "POST" });
       setTrackingTaskId(task.id);
-      setDashboard((current) => {
+      mutateDashboard((current) => {
         if (!current?.current_auto_run) return current;
         return {
           ...current,
@@ -316,9 +305,9 @@ function WorkbenchContent() {
             last_error: ""
           }
         };
-      });
+      }, { revalidate: false });
       setMessage(task.task_type === "continue_story_event" ? "已开始修正当前章节，正在继续该剧情事件。" : "已继续自动生产，任务已进入队列。");
-      await loadDashboard(selectedId);
+      await mutateDashboard();
     } catch (err) {
       setError(err.message);
     }
@@ -411,7 +400,8 @@ function WorkbenchContent() {
     ? (testRunScope === "first_chapter" ? "确认生成首章" : "确认生成完整事件")
     : pendingMode?.confirm;
   return (
-    <AppShell
+    <>
+    <AppShellRegion
       title="创作工作台"
       actions={
         <div className="workbench-actions">
@@ -421,7 +411,7 @@ function WorkbenchContent() {
           {renderProductionAction()}
         </div>
       }
-    >
+    />
       {pendingMode ? (
         <div className="modal-backdrop" role="presentation" onClick={() => setPendingProductionMode("")}>
           <div className="confirm-dialog production-mode-dialog" role="dialog" aria-modal="true" onClick={(event) => event.stopPropagation()}>
@@ -477,7 +467,7 @@ function WorkbenchContent() {
           />
         </>
       )}
-    </AppShell>
+    </>
   );
 }
 

@@ -2,9 +2,10 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 
-import AppShell from "@/components/AppShell";
+import AppShellRegion from "@/components/AppShellRegion";
 import EmptyState from "@/components/EmptyState";
 import { apiDownload, apiFetch } from "@/lib/api";
+import useSWR from "swr";
 
 
 const EMPTY_MEME_FORM = {
@@ -17,31 +18,31 @@ const EMPTY_MEME_FORM = {
 export default function MemeLibraryPage() {
   const fileRef = useRef(null);
   const editorRef = useRef(null);
-  const [entries, setEntries] = useState([]);
   const [query, setQuery] = useState("");
+  const [submittedQuery, setSubmittedQuery] = useState("");
   const [sourceType, setSourceType] = useState("all");
-  const [loading, setLoading] = useState(true);
+  // 热梗列表走 SWR 缓存：切回页面秒显缓存，后台静默刷新；缓存 key 含查询条件。
+  const memeParams = new URLSearchParams();
+  if (submittedQuery) memeParams.set("query", submittedQuery);
+  memeParams.set("source_type", sourceType);
+  const { data: entries = [], mutate: mutateEntries, isLoading: loading } = useSWR(
+    `/api/meme-library?${memeParams.toString()}`
+  );
   const [working, setWorking] = useState("");
   const [message, setMessage] = useState("");
   const [error, setError] = useState("");
   const [editor, setEditor] = useState(null);
   const [form, setForm] = useState(EMPTY_MEME_FORM);
 
-  async function loadEntries() {
-    setLoading(true);
-    try {
-      const params = new URLSearchParams();
-      if (query.trim()) params.set("query", query.trim());
-      params.set("source_type", sourceType);
-      setEntries(await apiFetch(`/api/meme-library?${params.toString()}`));
-    } finally {
-      setLoading(false);
+  function runSearch() {
+    // 查询词变化会改变 SWR key 自动拉取；词没变则手动触发一次刷新。
+    const next = query.trim();
+    if (next === submittedQuery) {
+      mutateEntries().catch((err) => setError(err.message));
+    } else {
+      setSubmittedQuery(next);
     }
   }
-
-  useEffect(() => {
-    loadEntries().catch((err) => setError(err.message));
-  }, [sourceType]);
 
   useEffect(() => {
     if (!editor) return undefined;
@@ -83,7 +84,7 @@ export default function MemeLibraryPage() {
         + (result.index_status === "completed" ? `已建立 ${result.indexed} 条向量。` : "向量将在配置 Qwen 后建立。")
       );
       if (result.errors?.length) setError(result.errors.join("；"));
-      await loadEntries();
+      await mutateEntries();
     } catch (err) {
       setError(err.message);
     } finally {
@@ -112,7 +113,7 @@ export default function MemeLibraryPage() {
     try {
       const result = await apiFetch("/api/meme-library/rebuild-index", { method: "POST" });
       setMessage(result.message);
-      await loadEntries();
+      await mutateEntries();
     } catch (err) {
       setError(err.message);
     } finally {
@@ -128,7 +129,7 @@ export default function MemeLibraryPage() {
         method: "PATCH",
         body: JSON.stringify({ enabled: !entry.enabled })
       });
-      setEntries((current) => current.map((item) => item.id === entry.id ? updated : item));
+      mutateEntries((current = []) => current.map((item) => item.id === entry.id ? updated : item), { revalidate: false });
     } catch (err) {
       setError(err.message);
     } finally {
@@ -173,11 +174,11 @@ export default function MemeLibraryPage() {
         method: editor.mode === "create" ? "POST" : "PATCH",
         body: JSON.stringify(payload)
       });
-      setEntries((current) => (
+      mutateEntries((current = []) => (
         editor.mode === "create"
           ? [saved, ...current]
           : current.map((item) => item.id === saved.id ? saved : item)
-      ));
+      ), { revalidate: false });
       setMessage(
         editor.mode === "create"
           ? "热梗已新增；向量会在下次检索或重建索引时生成。"
@@ -200,7 +201,7 @@ export default function MemeLibraryPage() {
     setError("");
     try {
       await apiFetch(`/api/meme-library/${entry.id}`, { method: "DELETE" });
-      setEntries((current) => current.filter((item) => item.id !== entry.id));
+      mutateEntries((current = []) => current.filter((item) => item.id !== entry.id), { revalidate: false });
       if (editor?.entryId === entry.id) setEditor(null);
       setMessage(`已删除${sourceLabel}热梗“${entry.phrase}”。`);
     } catch (err) {
@@ -211,9 +212,10 @@ export default function MemeLibraryPage() {
   }
 
   return (
-    <AppShell
+    <>
+    <AppShellRegion
       title="热梗库"
-    >
+    />
       <section className="panel">
         <div className="panel-header">
           <div>
@@ -281,7 +283,7 @@ export default function MemeLibraryPage() {
             <input
               value={query}
               onChange={(event) => setQuery(event.target.value)}
-              onKeyDown={(event) => { if (event.key === "Enter") loadEntries().catch((err) => setError(err.message)); }}
+              onKeyDown={(event) => { if (event.key === "Enter") runSearch(); }}
               placeholder="搜索热梗、含义或适用场景"
             />
             <select value={sourceType} onChange={(event) => setSourceType(event.target.value)}>
@@ -289,7 +291,7 @@ export default function MemeLibraryPage() {
               <option value="builtin">系统内置</option>
               <option value="user">用户扩展</option>
             </select>
-            <button className="secondary-button" onClick={() => loadEntries().catch((err) => setError(err.message))}>搜索</button>
+            <button className="secondary-button" onClick={runSearch}>搜索</button>
           </div>
           {loading ? <div className="inline-loading">正在加载热梗库…</div> : entries.length === 0 ? (
             <EmptyState title="没有匹配条目" description="调整筛选条件，或手动新增、导入符合3列表头的扩展库文件。" />
@@ -322,6 +324,6 @@ export default function MemeLibraryPage() {
           )}
         </div>
       </section>
-    </AppShell>
+    </>
   );
 }

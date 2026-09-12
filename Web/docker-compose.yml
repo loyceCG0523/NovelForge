@@ -1,3 +1,7 @@
+# 项目名固定为 novelforge，与既有容器/数据卷（novelforge_*）保持一致，
+# 避免从 Web/ 目录启动时被解析成 web 项目而新建同名容器导致冲突。
+name: novelforge
+
 services:
   # 本地关系数据库；pgvector 扩展用于后续向量检索和语义记忆。
   postgres:
@@ -19,12 +23,13 @@ services:
       retries: 5
 
   # 本地任务队列；API 把 Agent 任务写入 Redis，Worker 从 Redis 消费。
+  # 主机端口默认 6380，避开 Tyan 项目容器占用的 6379，两项目可同时运行。
   redis:
     image: redis:7-alpine
     container_name: novelforge-redis
     restart: unless-stopped
     ports:
-      - "${REDIS_PORT:-6379}:6379"
+      - "${REDIS_PORT:-6380}:6379"
     volumes:
       - redis_data:/data
     healthcheck:
@@ -34,6 +39,7 @@ services:
       retries: 5
 
   # 本地 S3 兼容对象存储；后续用于保存样本文本、导出文件和大体积素材。
+  # 主机端口默认 9002/9003，避开 Tyan 项目容器占用的 9000/9001。
   minio:
     image: minio/minio:latest
     container_name: novelforge-minio
@@ -43,8 +49,8 @@ services:
       MINIO_ROOT_USER: ${MINIO_ROOT_USER:-novelforge}
       MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:-novelforge123}
     ports:
-      - "${MINIO_API_PORT:-9000}:9000"
-      - "${MINIO_CONSOLE_PORT:-9001}:9001"
+      - "${MINIO_API_PORT:-9002}:9000"
+      - "${MINIO_CONSOLE_PORT:-9003}:9001"
     volumes:
       - minio_data:/data
     healthcheck:

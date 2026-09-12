@@ -12,7 +12,8 @@
   "dependencies": {
     "next": "latest",
     "react": "latest",
-    "react-dom": "latest"
+    "react-dom": "latest",
+    "swr": "^2.5.1"
   },
   "devDependencies": {
     "eslint": "latest",

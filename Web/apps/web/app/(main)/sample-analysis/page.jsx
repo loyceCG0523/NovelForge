@@ -2,9 +2,10 @@
 
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 
-import AppShell from "@/components/AppShell";
+import AppShellRegion from "@/components/AppShellRegion";
 import EmptyState from "@/components/EmptyState";
 import { apiFetch, getStoredUser, isTaskInFlight, subscribeSse } from "@/lib/api";
+import useSWR from "swr";
 import { useLiveRefresh } from "@/lib/useLiveRefresh";
 
 const defaultForm = {
@@ -218,10 +219,25 @@ function SampleAnalysisContent() {
   const annotationDraftRequestSequenceRef = useRef(0);
   const activeAnnotationDraftKeyRef = useRef("");
   const [scope, setScope] = useState("public");
-  const [works, setWorks] = useState([]);
-  const [categories, setCategories] = useState([]);
-  const [selectedWork, setSelectedWork] = useState(null);
-  const [chapterIndex, setChapterIndex] = useState([]);
+  const [submittedQuery, setSubmittedQuery] = useState("");
+  // 样本列表与分类目录走 SWR 缓存：切回页面秒显缓存，后台静默刷新。
+  const worksKey = scope === "public"
+    ? `/api/sample-collaboration/works/public?q=${encodeURIComponent(submittedQuery)}`
+    : "/api/sample-analyses";
+  const { data: rawWorks = [], mutate: mutateWorks } = useSWR(worksKey);
+  const { data: categories = [] } = useSWR("/api/sample-collaboration/categories");
+  const works = useMemo(() => uniqueById(rawWorks), [rawWorks]);
+  const [selectedWorkId, setSelectedWorkId] = useState("");
+  // 选中样本的详情与章节目录走 SWR 缓存：重复切换卡片秒显，后台静默刷新。
+  const { data: selectedWork = null, mutate: mutateWorkDetail } = useSWR(
+    selectedWorkId ? `/api/sample-collaboration/works/${selectedWorkId}` : null,
+    { keepPreviousData: false }
+  );
+  const { data: rawChapterIndex = [], mutate: mutateChapterIndex, isLoading: chapterIndexLoading } = useSWR(
+    selectedWorkId ? `/api/sample-collaboration/works/${selectedWorkId}/chapters/index` : null,
+    { keepPreviousData: false }
+  );
+  const chapterIndex = useMemo(() => uniqueById(rawChapterIndex), [rawChapterIndex]);
   const [chapter, setChapter] = useState(null);
   const [annotations, setAnnotations] = useState([]);
   const [chapterLoading, setChapterLoading] = useState(false);
@@ -301,25 +317,13 @@ function SampleAnalysisContent() {
   );
   activeChapterIdRef.current = chapter?.id || null;
 
-  async function loadWorks(nextScope = scope, search = query) {
-    const path = nextScope === "public"
-      ? `/api/sample-collaboration/works/public?q=${encodeURIComponent(search.trim())}`
-      : "/api/sample-analyses";
-    const data = uniqueById(await apiFetch(path));
-    setWorks(data);
-    setSelectedWork((current) => {
-      if (!current) return current;
-      const updated = data.find((item) => item.id === current.id);
-      return updated ? { ...current, ...updated } : current;
-    });
-    return data;
-  }
-
-  async function loadChapterIndex(workId) {
-    const data = uniqueById(await apiFetch(`/api/sample-collaboration/works/${workId}/chapters/index`));
-    setChapterIndex(data);
-    return data;
-  }
+  useEffect(() => {
+    // 目录加载完成且为空时提示重新分析（区分“加载中”与“确实为空”）。
+    if (selectedWorkId && selectedWork?.status === "completed" && !chapterIndexLoading && !chapterIndex.length) {
+      setMessage("章节目录尚未生成，可点击“重新分析并章节化”。");
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedWorkId, selectedWork?.status, chapterIndexLoading, chapterIndex.length]);
 
   function prefetchChapter(workId, target) {
     if (!target?.id || chapterPrefetchesRef.current.has(target.id)) return;
@@ -409,8 +413,8 @@ function SampleAnalysisContent() {
   }
 
   chapterSelectionHandlerRef.current = (sequenceNo) => {
-    if (!selectedWork?.id) return;
-    loadChapter(selectedWork.id, sequenceNo).catch((err) => setError(err.message));
+    if (!selectedWorkId) return;
+    loadChapter(selectedWorkId, sequenceNo).catch((err) => setError(err.message));
   };
 
   function rememberCurrentChapterScroll() {
@@ -428,24 +432,18 @@ function SampleAnalysisContent() {
     chapterContentCacheRef.current.clear();
     chapterAnnotationsCacheRef.current.clear();
     chapterPrefetchesRef.current.clear();
-    const [detail, index] = await Promise.all([
-      apiFetch(`/api/sample-collaboration/works/${work.id}`),
-      loadChapterIndex(work.id)
-    ]);
-    setSelectedWork(detail);
     setChapter(null);
     setAnnotations([]);
     setChapterLoading(false);
-    if (!index.length && detail.status === "completed") {
-      setMessage("章节目录尚未生成，可点击“重新分析并章节化”。");
-    }
+    // 只记录 id；详情与目录由 SWR 按 key 供给，访问过的样本立即命中缓存。
+    setSelectedWorkId(work.id);
   }
 
   async function enterFocusMode() {
     if (!selectedWork || !chapterIndex.length) return;
     const sequenceNo = chapter?.sequence_no || chapterIndex[0].sequence_no;
     if (!chapter || chapter.sequence_no !== sequenceNo) {
-      await loadChapter(selectedWork.id, sequenceNo);
+      await loadChapter(selectedWorkId, sequenceNo);
     }
     setDockTab("annotations");
     setFocusMode(true);
@@ -487,7 +485,7 @@ function SampleAnalysisContent() {
       setSelectedFile(null);
       if (fileInputRef.current) fileInputRef.current.value = "";
       setScope("mine");
-      await loadWorks("mine", "");
+      await mutateWorks();
       setMessage(`《${created.sample_title}》已上传，正在识别章节并生成总体分析。`);
     } catch (err) {
       setError(err.message);
@@ -502,8 +500,8 @@ function SampleAnalysisContent() {
     chapterContentCacheRef.current.clear();
     chapterAnnotationsCacheRef.current.clear();
     const updated = await apiFetch(`/api/sample-analyses/${work.id}/reindex`, { method: "POST" });
-    setSelectedWork((current) => current?.id === updated.id ? { ...current, ...updated } : current);
-    setWorks((current) => current.map((item) => item.id === updated.id ? { ...item, ...updated } : item));
+    mutateWorkDetail((current) => current?.id === updated.id ? { ...current, ...updated } : current, { revalidate: false });
+    mutateWorks((current = []) => current.map((item) => item.id === updated.id ? { ...item, ...updated } : item), { revalidate: false });
     setMessage("已提交总体分析与章节化任务，原有人工标注会安全迁移，不会被覆盖。");
   }
 
@@ -522,17 +520,16 @@ function SampleAnalysisContent() {
         })
       }
     );
-    setWorks((current) => current.map((item) => item.id === work.id ? { ...item, ...updated } : item));
-    if (selectedWork?.id === work.id) setSelectedWork(updated);
+    mutateWorks((current = []) => current.map((item) => item.id === work.id ? { ...item, ...updated } : item), { revalidate: false });
+    if (selectedWork?.id === work.id) mutateWorkDetail(updated, { revalidate: false });
     setMessage(makePublic ? "样本已发布到公共空间。" : "样本已转为私人可见。");
   }
 
   async function deleteWork(work) {
     await apiFetch(`/api/sample-analyses/${work.id}`, { method: "DELETE" });
-    setWorks((current) => current.filter((item) => item.id !== work.id));
+    mutateWorks((current = []) => current.filter((item) => item.id !== work.id), { revalidate: false });
     if (selectedWork?.id === work.id) {
-      setSelectedWork(null);
-      setChapterIndex([]);
+      setSelectedWorkId("");
       setChapter(null);
       setAnnotations([]);
     }
@@ -577,7 +574,7 @@ function SampleAnalysisContent() {
     if (!draft) {
       draft = {
         key,
-        workId: selectedWork.id,
+        workId: selectedWorkId,
         chapterId: chapter.id,
         selection: nextSelection,
         categories: [],
@@ -619,7 +616,7 @@ function SampleAnalysisContent() {
     const existingDraft = annotationDraftSessionsRef.current.get(key);
     const draft = existingDraft ? { ...existingDraft, editingAnnotation: annotation } : {
       key,
-      workId: selectedWork.id,
+      workId: selectedWorkId,
       chapterId: chapter.id,
       selection: {
         start_offset: annotation.start_offset,
@@ -805,7 +802,7 @@ function SampleAnalysisContent() {
           })
         });
         setAnnotations((current) => normalizeAnnotations([...current, saved]));
-        loadChapterIndex(selectedWork.id).catch((err) => setError(err.message));
+        mutateChapterIndex().catch((err) => setError(err.message));
       }
       resetAnnotationForm();
       setDockTab("annotations");
@@ -835,7 +832,7 @@ function SampleAnalysisContent() {
     const requestedSelection = { ...selection };
     const requestedCategories = [...selectedCategories];
     const requestedChapterId = chapter.id;
-    const requestedWorkId = selectedWork.id;
+    const requestedWorkId = selectedWorkId;
     updateAnnotationDraftSession(draftKey, {
       selection: requestedSelection,
       categories: requestedCategories,
@@ -892,7 +889,7 @@ function SampleAnalysisContent() {
   async function batchGenerateAnnotationNotes() {
     if (!chapter?.id || !selectedWork?.id || !missingNoteCount || editingAnnotation) return;
     const requestedChapterId = chapter.id;
-    const requestedWorkId = selectedWork.id;
+    const requestedWorkId = selectedWorkId;
     setBatchExplainingChapterIds((current) => [...new Set([...current, requestedChapterId])]);
     setError("");
     setMessage("");
@@ -945,7 +942,7 @@ function SampleAnalysisContent() {
   async function removeAnnotation(annotation) {
     await apiFetch(`/api/sample-collaboration/annotations/${annotation.id}`, { method: "DELETE" });
     setAnnotations((current) => current.filter((item) => item.id !== annotation.id));
-    if (selectedWork?.id) loadChapterIndex(selectedWork.id).catch((err) => setError(err.message));
+    if (selectedWorkId) mutateChapterIndex().catch((err) => setError(err.message));
   }
 
   async function reportAnnotation(annotation) {
@@ -966,21 +963,13 @@ function SampleAnalysisContent() {
     chapterAnnotationsCacheRef.current.clear();
     chapterPrefetchesRef.current.clear();
     setScope(nextScope);
-    setSelectedWork(null);
-    setChapterIndex([]);
+    setSelectedWorkId("");
     setChapter(null);
     setAnnotations([]);
     setChapterLoading(false);
     setFocusMode(false);
-    await loadWorks(nextScope, nextScope === "public" ? query : "");
+    setSubmittedQuery(nextScope === "public" ? query.trim() : "");
   }
-
-  useEffect(() => {
-    Promise.all([
-      loadWorks("public", ""),
-      apiFetch("/api/sample-collaboration/categories").then(setCategories)
-    ]).catch((err) => setError(err.message));
-  }, []);
 
   useEffect(() => () => {
     chapterLoadRequestRef.current?.abort();
@@ -1002,14 +991,13 @@ function SampleAnalysisContent() {
     enabled: scope === "mine" && hasActiveWorks,
     intervalMs: 2500,
     refresh: async () => {
-      const data = await loadWorks("mine", "");
-      if (!selectedWork?.id) return;
-      const current = data.find((item) => item.id === selectedWork.id);
+      const data = await mutateWorks();
+      if (!selectedWorkId) return;
+      const current = data.find((item) => item.id === selectedWorkId);
       if (!current) return;
-      const detail = await apiFetch(`/api/sample-collaboration/works/${selectedWork.id}`);
-      setSelectedWork(detail);
+      const detail = await mutateWorkDetail();
       if (!isTaskInFlight(current.status)) {
-        await loadChapterIndex(selectedWork.id);
+        await mutateChapterIndex();
       }
     },
     onError: (err) => setError(err.message)
@@ -1040,15 +1028,15 @@ function SampleAnalysisContent() {
   }, [message]);
 
   useEffect(() => {
-    if (!selectedWork?.id) return undefined;
+    if (!selectedWorkId) return undefined;
     return subscribeSse(
-      `/api/sample-collaboration/works/${selectedWork.id}/events`,
+      `/api/sample-collaboration/works/${selectedWorkId}/events`,
       () => {
-        apiFetch(`/api/sample-collaboration/works/${selectedWork.id}`).then(setSelectedWork).catch(() => {});
-        loadChapterIndex(selectedWork.id).catch(() => {});
+        mutateWorkDetail().catch(() => {});
+        mutateChapterIndex().catch(() => {});
         if (!chapter?.id) return;
         apiFetch(
-          `/api/sample-collaboration/works/${selectedWork.id}/annotations?segment_id=${chapter.id}`
+          `/api/sample-collaboration/works/${selectedWorkId}/annotations?segment_id=${chapter.id}`
         ).then((rows) => {
           const normalized = normalizeAnnotations(rows);
           writeLruCache(chapterAnnotationsCacheRef.current, chapter.id, normalized);
@@ -1057,10 +1045,11 @@ function SampleAnalysisContent() {
       },
       () => {}
     );
-  }, [selectedWork?.id, chapter?.id]);
+  }, [selectedWorkId, chapter?.id]);
 
   return (
-    <AppShell title="样本协作" actions={<span className="tag purple">人工标注 · 可信后使用</span>}>
+    <>
+    <AppShellRegion title="样本协作" actions={<span className="tag purple">人工标注 · 可信后使用</span>} />
       {(message || error) ? <div className={error ? "error-box" : "hint-panel"}>{error || message}</div> : null}
 
       <section className="collab-library-toolbar">
@@ -1069,7 +1058,7 @@ function SampleAnalysisContent() {
           <button className={scope === "mine" ? "active" : ""} type="button" onClick={() => switchScope("mine").catch((err) => setError(err.message))}>我的样本</button>
         </div>
         {scope === "public" ? (
-          <form className="collab-search" onSubmit={(event) => { event.preventDefault(); loadWorks("public", query).catch((err) => setError(err.message)); }}>
+          <form className="collab-search" onSubmit={(event) => { event.preventDefault(); const next = query.trim(); if (next === submittedQuery) { mutateWorks().catch((err) => setError(err.message)); } else { setSubmittedQuery(next); } }}>
             <input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="搜索作品名、作者或题材" />
             <button className="secondary-button">搜索</button>
           </form>
@@ -1114,7 +1103,7 @@ function SampleAnalysisContent() {
           {!works.length ? <EmptyState title="暂无样本" description={scope === "public" ? "还没有已发布的公共样本。" : "上传后即可开始私人或协同标注。"} /> : (
             <div className="collab-library-grid">
               {works.map((work) => (
-                <article className={`collab-work-card ${selectedWork?.id === work.id ? "active" : ""}`} key={work.id}>
+                <article className={`collab-work-card ${selectedWorkId === work.id ? "active" : ""}`} key={work.id}>
                   <button type="button" className="collab-work-open" onClick={() => openWork(work).catch((err) => setError(err.message))}>
                     <span className="collab-card-status">{statusLabels[work.status] || work.status} · {work.visibility === "public" ? "公共" : "私人"}</span>
                     <strong>{work.sample_title}</strong>
@@ -1292,7 +1281,7 @@ function SampleAnalysisContent() {
           </div>
         </div>
       ) : null}
-    </AppShell>
+    </>
   );
 }
 

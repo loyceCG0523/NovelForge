@@ -2,10 +2,10 @@
 
 import { Suspense, useEffect, useMemo, useRef, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
+import useSWR from "swr";
 
-import AppShell from "@/components/AppShell";
+import AppShellRegion from "@/components/AppShellRegion";
 import EmptyState from "@/components/EmptyState";
-import { apiFetch } from "@/lib/api";
 
 function splitParagraphs(content) {
   return (content || "")
@@ -19,10 +19,13 @@ function ChapterCanvasContent() {
   // 章节画布只负责阅读和检查生成结果，不承担编辑职责。
   const router = useRouter();
   const searchParams = useSearchParams();
-  const [projects, setProjects] = useState([]);
   const [selectedNovelId, setSelectedNovelId] = useState("");
-  const [chapters, setChapters] = useState([]);
   const [selectedChapterId, setSelectedChapterId] = useState("");
+  // 作品与章节列表走 SWR 缓存：切回页面秒显缓存，后台静默刷新。
+  const { data: projects = [] } = useSWR("/api/novels");
+  const { data: chapters = [] } = useSWR(
+    selectedNovelId ? `/api/novels/${selectedNovelId}/chapters` : null
+  );
   const [error, setError] = useState("");
   const readerTopRef = useRef(null);
 
@@ -52,34 +55,26 @@ function ChapterCanvasContent() {
     });
   }, [selectedChapterId]);
 
-  async function loadProjects() {
-    const data = await apiFetch("/api/novels");
-    setProjects(data);
-    const nextNovelId = searchParams.get("novel") || selectedNovelId || data[0]?.id || "";
-    setSelectedNovelId(nextNovelId);
-    return nextNovelId;
-  }
-
-  async function loadChapters(novelId) {
-    if (!novelId) return;
-    const data = await apiFetch(`/api/novels/${novelId}/chapters`);
-    setChapters(data);
-    setSelectedChapterId((current) => {
-      if (data.some((chapter) => chapter.id === current)) return current;
-      return data[0]?.id || "";
-    });
-  }
+  useEffect(() => {
+    // 作品列表由 SWR 供给；这里只负责按 URL 参数或当前选择挑定作品。
+    if (!projects.length) return;
+    const nextNovelId = searchParams.get("novel") || selectedNovelId || projects[0]?.id || "";
+    if (nextNovelId && nextNovelId !== selectedNovelId) setSelectedNovelId(nextNovelId);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [searchParams, projects]);
 
   useEffect(() => {
-    loadProjects().then(loadChapters).catch((err) => setError(err.message));
-  }, [searchParams]);
-
-  useEffect(() => {
-    if (selectedNovelId) loadChapters(selectedNovelId).catch((err) => setError(err.message));
-  }, [selectedNovelId]);
+    // 章节列表变化时校正选中章节：保持当前选择（仍存在）否则默认第一章。
+    if (!chapters.length) return;
+    if (!chapters.some((chapter) => chapter.id === selectedChapterId)) {
+      setSelectedChapterId(chapters[0]?.id || "");
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [chapters, selectedNovelId]);
 
   return (
-    <AppShell
+    <>
+    <AppShellRegion
       title="章节画布"
       actions={
         <>
@@ -90,7 +85,7 @@ function ChapterCanvasContent() {
           <button className="primary-button" disabled={!selectedNovelId} onClick={() => router.push(`/workbench?novel=${selectedNovelId}`)}>返回工作台</button>
         </>
       }
-    >
+    />
       {projects.length === 0 ? (
         <EmptyState title="还没有作品" description="请先创建作品，再查看章节画布。" action={<a className="primary-button" href="/projects">去创建作品</a>} />
       ) : (
@@ -161,7 +156,7 @@ function ChapterCanvasContent() {
           </section>
         </>
       )}
-    </AppShell>
+    </>
   );
 }
 

@@ -2,8 +2,9 @@
 
 import { Suspense, useEffect, useMemo, useState } from "react";
 import { useSearchParams } from "next/navigation";
+import useSWR from "swr";
 
-import AppShell from "@/components/AppShell";
+import AppShellRegion from "@/components/AppShellRegion";
 import EmptyState from "@/components/EmptyState";
 import { apiFetch } from "@/lib/api";
 
@@ -50,9 +51,12 @@ function getSourceCount(payload) {
 function MemoryContent() {
   // 结构化记忆页用于查看自动抽取和手动维护的长期事实，后续章节生成会读取这些内容。
   const searchParams = useSearchParams();
-  const [projects, setProjects] = useState([]);
   const [selectedId, setSelectedId] = useState("");
-  const [memories, setMemories] = useState([]);
+  // 作品列表与结构化记忆走 SWR 缓存：切回页面秒显缓存，后台静默刷新。
+  const { data: projects = [] } = useSWR("/api/novels");
+  const { data: memories = [], mutate: mutateMemories } = useSWR(
+    selectedId ? `/api/novels/${selectedId}/memory` : null
+  );
   const [activeType, setActiveType] = useState("all");
   const [message, setMessage] = useState("");
   const [error, setError] = useState("");
@@ -78,19 +82,6 @@ function MemoryContent() {
     return counts;
   }, [memories]);
 
-  async function loadProjects() {
-    const data = await apiFetch("/api/novels");
-    setProjects(data);
-    const nextId = novelIdFromUrl || selectedId || data[0]?.id || "";
-    setSelectedId(nextId);
-    return nextId;
-  }
-
-  async function loadMemories(id) {
-    if (!id) return;
-    setMemories(await apiFetch(`/api/novels/${id}/memory`));
-  }
-
   async function confirmDeleteMemory() {
     if (!selectedId || !pendingDelete) return;
     setMessage("");
@@ -99,7 +90,7 @@ function MemoryContent() {
     try {
       await apiFetch(`/api/novels/${selectedId}/memory/${pendingDelete.id}`, { method: "DELETE" });
       const sourceIds = pendingDelete.payload?.source_memory_ids || [pendingDelete.id];
-      setMemories((current) => current.filter((memory) => !sourceIds.includes(memory.id)));
+      mutateMemories((current = []) => current.filter((memory) => !sourceIds.includes(memory.id)), { revalidate: false });
       setMessage("结构化记忆已删除");
       setPendingDelete(null);
     } catch (err) {
@@ -116,7 +107,7 @@ function MemoryContent() {
     setClearingAll(true);
     try {
       await apiFetch(`/api/novels/${selectedId}/memory`, { method: "DELETE" });
-      setMemories([]);
+      mutateMemories([], { revalidate: false });
       setActiveType("all");
       setMessage("已清空当前作品的全部结构化记忆");
       setConfirmClearAll(false);
@@ -128,15 +119,16 @@ function MemoryContent() {
   }
 
   useEffect(() => {
-    loadProjects().then(loadMemories).catch((err) => setError(err.message));
-  }, [novelIdFromUrl]);
-
-  useEffect(() => {
-    if (selectedId) loadMemories(selectedId).catch((err) => setError(err.message));
-  }, [selectedId]);
+    // 作品列表由 SWR 供给；这里只负责按 URL 参数或当前选择挑定作品。
+    if (!projects.length) return;
+    const nextId = novelIdFromUrl || selectedId || projects[0]?.id || "";
+    if (nextId && nextId !== selectedId) setSelectedId(nextId);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [novelIdFromUrl, projects]);
 
   return (
-    <AppShell
+    <>
+    <AppShellRegion
       title="结构化记忆"
       actions={
         <>
@@ -146,7 +138,7 @@ function MemoryContent() {
           <button className="danger-button" disabled={!selectedId || memories.length === 0} onClick={() => setConfirmClearAll(true)}>清空全部</button>
         </>
       }
-    >
+    />
       {projects.length === 0 ? (
         <EmptyState title="还没有作品" description="先创建作品并生成章节，系统会在章节完成后同步结构化记忆。" action={<a className="primary-button" href="/projects">去创建作品</a>} />
       ) : (
@@ -257,7 +249,7 @@ function MemoryContent() {
           </div>
         </div>
       ) : null}
-    </AppShell>
+    </>
   );
 }
 

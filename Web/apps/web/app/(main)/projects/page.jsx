@@ -2,7 +2,8 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
-import AppShell from "@/components/AppShell";
+import useSWR from "swr";
+import AppShellRegion from "@/components/AppShellRegion";
 import EmptyState from "@/components/EmptyState";
 import { apiDownload, apiFetch, buildTimestampedDownloadFilename, isTaskInFlight } from "@/lib/api";
 import { parseMarkdownJsonArray } from "@/lib/markdownImport.mjs";
@@ -363,14 +364,14 @@ export default function ProjectsPage() {
   const projectPickerRef = useRef(null);
   const requirementImportInputRef = useRef(null);
   const createRequirementImportInputRef = useRef(null);
-  const [projects, setProjects] = useState([]);
-  const [sampleLibrary, setSampleLibrary] = useState([]);
   const [selectedProjectId, setSelectedProjectId] = useState("");
+  // 作品列表/样本库/作品圣经走 SWR 缓存：切回页面秒显缓存，后台静默刷新。
+  const { data: projects = [], mutate: mutateProjects } = useSWR("/api/novels");
+  const { data: sampleLibrary = [] } = useSWR("/api/sample-analyses/library");
   const [projectMenuOpen, setProjectMenuOpen] = useState(false);
   const [briefForm, setBriefForm] = useState(projectToForm(null));
   const [createForm, setCreateForm] = useState(emptyProjectForm);
   const [showCreateDialog, setShowCreateDialog] = useState(false);
-  const [storyBible, setStoryBible] = useState(null);
   const [storyBibleTask, setStoryBibleTask] = useState(null);
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
   const [deleteProjectIds, setDeleteProjectIds] = useState([]);
@@ -399,10 +400,15 @@ export default function ProjectsPage() {
     && deleteCodeInput !== deleteCode
   );
 
+  const { data: storyBible = null, mutate: mutateStoryBible } = useSWR(
+    selectedProject?.id ? `/api/novels/${selectedProject.id}/story-bible` : null
+  );
+
   useEffect(() => {
-    loadProjects();
-    loadSampleLibrary();
-  }, []);
+    // 作品列表由 SWR 供给；默认选中第一部作品。
+    if (!selectedProjectId && projects.length) setSelectedProjectId(projects[0].id);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [projects]);
 
   useEffect(() => {
     function closeProjectMenuOnOutsideClick(event) {
@@ -422,12 +428,7 @@ export default function ProjectsPage() {
     setBriefDocMessage("");
     setStoryBibleTask(null);
     if (selectedProject?.id) {
-      Promise.all([
-        loadStoryBible(selectedProject.id),
-        loadActiveStoryBibleTask(selectedProject.id)
-      ]).catch((err) => setStoryBibleError(err.message));
-    } else {
-      setStoryBible(null);
+      loadActiveStoryBibleTask(selectedProject.id).catch((err) => setStoryBibleError(err.message));
     }
   }, [selectedProject?.id]);
 
@@ -439,30 +440,11 @@ export default function ProjectsPage() {
       setStoryBibleTask(task);
       setStoryBibleError("");
       if (["completed", "waiting"].includes(task.status)) {
-        await loadStoryBible(selectedProjectId);
+        await mutateStoryBible();
       }
     },
     onError: (err) => setStoryBibleError(err.message)
   });
-
-  async function loadProjects() {
-    try {
-      const data = await apiFetch("/api/novels");
-      setProjects(data);
-      setSelectedProjectId((current) => current || data[0]?.id || "");
-    } catch (err) {
-      setProjectError(err.message);
-    }
-  }
-
-  async function loadSampleLibrary() {
-    try {
-      const data = await apiFetch("/api/sample-analyses/library");
-      setSampleLibrary(data);
-    } catch (err) {
-      setProjectError(err.message);
-    }
-  }
 
   function updateBriefForm(key, value) {
     setBriefForm((current) => ({ ...current, [key]: value }));
@@ -503,7 +485,7 @@ export default function ProjectsPage() {
         method: "POST",
         body: JSON.stringify(formToNovelPayload(createForm))
       });
-      setProjects((current) => [created, ...current]);
+      mutateProjects((current = []) => [created, ...current], { revalidate: false });
       setSelectedProjectId(created.id);
       setCreateForm(emptyProjectForm);
       setCreateDocMessage("");
@@ -527,19 +509,13 @@ export default function ProjectsPage() {
         method: "PATCH",
         body: JSON.stringify(formToNovelPayload(briefForm))
       });
-      setProjects((current) => current.map((project) => (project.id === saved.id ? saved : project)));
+      mutateProjects((current = []) => current.map((project) => (project.id === saved.id ? saved : project)), { revalidate: false });
       if (regenerateBible) {
         await generateStoryBible(saved.id, "brief_saved");
       }
     } catch (err) {
       setProjectError(err.message);
     }
-  }
-
-  async function loadStoryBible(projectId) {
-    setStoryBibleError("");
-    const data = await apiFetch(`/api/novels/${projectId}/story-bible`);
-    setStoryBible(data);
   }
 
   async function loadActiveStoryBibleTask(projectId) {
@@ -624,7 +600,7 @@ export default function ProjectsPage() {
         deletedProjectIds.push(projectId);
       }
       const remainingProjects = projects.filter((project) => !deleteProjectIds.includes(project.id));
-      setProjects(remainingProjects);
+      mutateProjects(remainingProjects, { revalidate: false });
       setSelectedProjectId((current) => (deleteProjectIds.includes(current) ? remainingProjects[0]?.id || "" : current));
       setDeleteDialogOpen(false);
       setDeleteProjectIds([]);
@@ -634,7 +610,7 @@ export default function ProjectsPage() {
     } catch (err) {
       if (deletedProjectIds.length > 0) {
         const remainingProjects = projects.filter((project) => !deletedProjectIds.includes(project.id));
-        setProjects(remainingProjects);
+        mutateProjects(remainingProjects, { revalidate: false });
         setSelectedProjectId((current) => (deletedProjectIds.includes(current) ? remainingProjects[0]?.id || "" : current));
         setDeleteProjectIds((current) => current.filter((projectId) => !deletedProjectIds.includes(projectId)));
       }
@@ -725,7 +701,8 @@ export default function ProjectsPage() {
   }
 
   return (
-    <AppShell
+    <>
+    <AppShellRegion
       title="作品管理"
       actions={(
         <div className="project-top-actions">
@@ -772,7 +749,7 @@ export default function ProjectsPage() {
           <button className="primary-button" onClick={openCreateDialog}>新建作品</button>
         </div>
       )}
-    >
+    />
       <section className="projects-workspace">
         <section className="project-detail-stack">
           <section className="panel project-overview-panel">
@@ -986,7 +963,7 @@ export default function ProjectsPage() {
           </div>
         </div>
       ) : null}
-    </AppShell>
+    </>
   );
 }
 

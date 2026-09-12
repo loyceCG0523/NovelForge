@@ -17,7 +17,7 @@ docker compose up -d
 conda activate novelforge-api
 cd D:\CodeProject\AgentProject\NovelForge\Web\apps\api
 python -m alembic upgrade head
-python -m uvicorn app.main:app --reload --host 127.0.0.1 --port 8000
+python -m uvicorn app.main:app --reload --host 127.0.0.1 --port 8100
 ```
 
 启动前端：

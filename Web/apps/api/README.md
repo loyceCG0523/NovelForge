@@ -20,13 +20,13 @@ conda activate novelforge-api
 cd D:\CodeProject\AgentProject\NovelForge\Web\apps\api
 python -m pip install -r requirements.txt
 python -m alembic upgrade head
-python -m uvicorn app.main:app --reload --host 127.0.0.1 --port 8000
+python -m uvicorn app.main:app --reload --host 127.0.0.1 --port 8100
 ```
 
 接口文档：
 
 ```text
-http://127.0.0.1:8000/docs
+http://127.0.0.1:8100/docs
 ```
 
 健康检查：

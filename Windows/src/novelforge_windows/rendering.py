@@ -1,4 +1,9 @@
-"""Qt WebEngine rendering policy for the Windows desktop shell."""
+"""Qt WebEngine rendering policy for the Windows desktop shell.
+
+The packaged application deliberately uses Chromium software rendering on every
+machine. This avoids the Qt WebEngine -> DWM shared-texture presentation path,
+which can leave torn or stale frames on otherwise healthy GPU drivers.
+"""
 
 from __future__ import annotations
 
@@ -12,21 +17,13 @@ from typing import MutableSequence
 from novelforge_windows.config import APP_NAME, DATA_DIR_ENV
 
 
-ENABLE_GPU_ENV = "NOVELFORGE_ENABLE_GPU"
-DISABLE_GPU_ENV = "NOVELFORGE_DISABLE_GPU"
 CHROMIUM_FLAGS_ENV = "QTWEBENGINE_CHROMIUM_FLAGS"
 EFFECTIVE_RENDERING_ENV = "NOVELFORGE_EFFECTIVE_RENDERING"
 RECOVERY_RENDERING_ENV = "NOVELFORGE_RECOVERY_RENDERING"
 SAFE_RENDERING_ARGUMENT = "--safe-rendering"
 RECOVERY_MARKER_NAME = "webengine-safe-rendering-next-launch.json"
 
-GPU_MODE = "gpu"
 SOFTWARE_MODE = "software"
-_TRUE_VALUES = {"1", "true", "yes", "on"}
-
-
-def _is_enabled(value: str | None) -> bool:
-    return str(value or "").strip().lower() in _TRUE_VALUES
 
 
 def _contains_disable_gpu(flags: str) -> bool:
@@ -111,38 +108,31 @@ def configure_webengine_rendering(
     *,
     data_dir: str | Path | None = None,
 ) -> str:
-    """Select GPU by default, with explicit and one-shot software fallbacks.
+    """Force Chromium software rendering before importing Qt WebEngine.
 
-    This function must run before importing Qt WebEngine. ``NOVELFORGE_ENABLE_GPU``
-    remains supported as a legacy override for an automatic recovery marker. An
-    explicit safe-mode argument or ``NOVELFORGE_DISABLE_GPU`` always wins.
+    ``--safe-rendering`` remains accepted so existing shortcuts keep working,
+    but it is now equivalent to the normal startup path. No environment switch
+    can re-enable GPU rendering for the packaged application.
     """
     arguments = sys.argv if argv is None else argv
     safe_argument = SAFE_RENDERING_ARGUMENT in arguments
     if safe_argument:
         arguments[:] = [item for item in arguments if item != SAFE_RENDERING_ARGUMENT]
 
-    disable_requested = safe_argument or _is_enabled(os.getenv(DISABLE_GPU_ENV))
-    legacy_gpu_override = _is_enabled(os.getenv(ENABLE_GPU_ENV))
-    recovery_requested = (
-        not disable_requested
-        and not legacy_gpu_override
-        and has_gpu_recovery_request(data_dir)
-    )
-
     flags = os.getenv(CHROMIUM_FLAGS_ENV, "").strip()
-    if disable_requested or recovery_requested:
-        if not _contains_disable_gpu(flags):
-            flags = f"{flags} --disable-gpu".strip()
-            os.environ[CHROMIUM_FLAGS_ENV] = flags
+    if not _contains_disable_gpu(flags):
+        flags = f"{flags} --disable-gpu".strip()
+    os.environ[CHROMIUM_FLAGS_ENV] = flags
+    os.environ[EFFECTIVE_RENDERING_ENV] = SOFTWARE_MODE
 
-    effective_mode = SOFTWARE_MODE if _contains_disable_gpu(flags) else GPU_MODE
-    os.environ[EFFECTIVE_RENDERING_ENV] = effective_mode
+    # Keep one-shot recovery markers consumable after upgrades from releases
+    # that used GPU rendering, even though every launch is now already safe.
+    recovery_requested = has_gpu_recovery_request(data_dir)
     if recovery_requested:
         os.environ[RECOVERY_RENDERING_ENV] = "1"
     else:
         os.environ.pop(RECOVERY_RENDERING_ENV, None)
-    return effective_mode
+    return SOFTWARE_MODE
 
 
 def software_rendering_active() -> bool:
@@ -152,4 +142,4 @@ def software_rendering_active() -> bool:
 
 
 def recovery_rendering_active() -> bool:
-    return _is_enabled(os.getenv(RECOVERY_RENDERING_ENV))
+    return os.getenv(RECOVERY_RENDERING_ENV) == "1"
